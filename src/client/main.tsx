@@ -9,6 +9,15 @@ import { Layout } from './layout/Layout.tsx';
 import { Login } from './pages/Login.tsx';
 import { PublicForm } from './pages/PublicForm.tsx';
 
+// After a new release an open tab asks for page files that no longer exist: reload once to get the new version.
+window.addEventListener('vite:preloadError', (e) => {
+  let last = 0;
+  try { last = Number(sessionStorage.getItem('vela-reload-at') ?? 0); sessionStorage.setItem('vela-reload-at', String(Date.now())); } catch { /* storage unavailable */ }
+  if (Date.now() - last < 15_000) return;
+  e.preventDefault();
+  location.reload();
+});
+
 const Dashboard = lazy(() => import('./pages/Dashboard.tsx'));
 const Tasks = lazy(() => import('./pages/Tasks.tsx'));
 const TaskTemplates = lazy(() => import('./pages/Tasks.tsx').then((m) => ({ default: m.TaskTemplates })));
