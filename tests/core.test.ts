@@ -179,3 +179,11 @@ test('rich text is sanitized', async () => {
   const a = await call('POST', '/api/e/kb_articles', { section_id: sec.id, title: 'XSS', body: '<p onclick="alert(1)">hi</p><script>alert(1)</script><a href="javascript:alert(1)">x</a>' });
   assert.doesNotMatch(a.body, /script|onclick|javascript:/);
 });
+
+test('sort/limit params are not treated as filters', async () => {
+  const p = await call('GET', '/api/e/pipelines', undefined, { limit: '50', sort: 'sort', dir: 'asc' });
+  assert.ok(p.total >= 2);
+  const s = await call('GET', '/api/e/stages', undefined, { pipeline_id: String(p.items[0].id), sort: 'sort', dir: 'asc', limit: '50' });
+  assert.ok(s.items.length >= 6);
+  assert.ok(s.items[0].sort <= s.items[1].sort);
+});

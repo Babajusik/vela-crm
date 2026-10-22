@@ -177,6 +177,7 @@ export function expand(db: DB, ent: Entity, items: Record<string, any>[]) {
 export interface ListResult { items: Record<string, any>[]; total: number }
 
 const OPS: Record<string, string> = { gte: '>=', lte: '<=', gt: '>', lt: '<', ne: '!=' };
+const RESERVED_PARAMS = new Set(['q', 'sort', 'dir', 'limit', 'offset', 'expand', 'mine']);
 
 export function buildWhere(ent: Entity, query: Record<string, string>, ctx?: Ctx): { where: string; params: unknown[] } {
   const conds: string[] = [];
@@ -188,6 +189,8 @@ export function buildWhere(ent: Entity, query: Record<string, string>, ctx?: Ctx
   fieldMap.set('created_by', { key: 'created_by', label: 'Автор', type: 'user' });
   for (const [rawKey, rawVal] of Object.entries(query)) {
     if (rawVal === undefined || rawVal === '') continue;
+    // paging and sorting params are not filters, even when an entity has a field with the same name (e.g. "sort")
+    if (RESERVED_PARAMS.has(rawKey)) continue;
     const [key, op] = rawKey.split('__');
     const f = fieldMap.get(key);
     if (!f || f.internal) continue;
