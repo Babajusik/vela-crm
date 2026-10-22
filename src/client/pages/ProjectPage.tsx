@@ -11,7 +11,7 @@ import { RecordForm } from '../ui/fields.tsx';
 import { TaskCard } from './Tasks.tsx';
 import { FilesBlock } from './Files.tsx';
 
-type Tab = 'overview' | 'tasks' | 'gantt' | 'milestones' | 'sprints' | 'issues' | 'finance' | 'feed' | 'files';
+type Tab = 'overview' | 'stages' | 'tasks' | 'gantt' | 'milestones' | 'sprints' | 'issues' | 'finance' | 'feed' | 'files';
 
 export default function ProjectPage() {
   const { id } = useParams();
@@ -40,14 +40,16 @@ export default function ProjectPage() {
           <h1 className="text-2xl font-extrabold tracking-tight">{p.name}</h1>
           <p className="mt-0.5 text-sm text-muted">{[p.code, p._ref?.company_id?.title, `${date(p.start_date)} — ${date(p.end_date)}`].filter(Boolean).join(' · ')}</p>
         </div>
+        {can('projects', 'write') && <Button size="sm" onClick={async () => { await api.patch(`/api/e/projects/${pid}`, { is_archived: p.is_archived ? 0 : 1 }); inv('projects'); toast.success(p.is_archived ? 'Проект возвращён из архива' : 'Проект в архиве'); }}>{p.is_archived ? 'Из архива' : 'В архив'}</Button>}
         {can('projects', 'write') && <IconButton label="Удалить проект" onClick={remove}><Trash2 className="size-4" /></IconButton>}
       </div>
       <Tabs value={tab} onChange={setTab} className="mb-5" tabs={[
-        { value: 'overview', label: 'Обзор' }, { value: 'tasks', label: 'Задачи' }, { value: 'gantt', label: 'Гант' }, { value: 'milestones', label: 'Вехи' },
+        { value: 'overview', label: 'Обзор' }, { value: 'stages', label: 'Этапы' }, { value: 'tasks', label: 'Задачи' }, { value: 'gantt', label: 'Гант' }, { value: 'milestones', label: 'Вехи' },
         ...(agile ? [{ value: 'sprints' as Tab, label: 'Спринты' }] : []), { value: 'issues', label: 'Замечания' }, { value: 'finance', label: 'Финансы' },
         { value: 'feed', label: 'Обсуждение' }, { value: 'files', label: 'Файлы' },
       ]} />
       {tab === 'overview' && <Overview p={p} />}
+      {tab === 'stages' && <Stages p={p} />}
       {tab === 'tasks' && <ProjectTasks p={p} userId={user!.id} />}
       {tab === 'gantt' && <Gantt projectId={pid} />}
       {tab === 'milestones' && <EntityList entity="milestones" baseParams={{ project_id: pid }} defaults={{ project_id: pid, date: todayIso() }} createLabel="Веха" columns={['name', 'date', 'done', 'description']} formFields={['name', 'date', 'done', 'description']} canExport={false} />}
@@ -101,7 +103,7 @@ function Overview({ p }: { p: any }) {
           </Card>
         </div>
         <div className="space-y-5">
-          <Card title="Параметры"><FieldsPanel entity="projects" item={p} fields={['status', 'kind', 'manager_id', 'members', 'company_id', 'deal_id', 'start_date', 'end_date', 'budget', 'cost_budget', 'description']} /></Card>
+          <Card title="Параметры"><FieldsPanel entity="projects" item={p} fields={['status', 'kind', 'manager_id', 'members', 'company_id', 'deal_id', 'portfolio_id', 'start_date', 'end_date', 'budget', 'cost_budget', 'description']} /></Card>
           {o.openIssues > 0 && <Card><p className="text-sm">Открытых замечаний: <b className="text-danger">{o.openIssues}</b></p></Card>}
         </div>
       </div>
@@ -277,5 +279,32 @@ function ProjectFinance({ p }: { p: any }) {
         columns={['date', 'kind', 'amount', 'category_id', 'company_id', 'description', 'status']}
         formFields={['kind', 'date', 'amount', 'account_id', 'category_id', 'company_id', 'description', 'status']} />
     </div>
+  );
+}
+
+function Stages({ p }: { p: any }) {
+  const { data } = useList('project_stages', { project_id: p.id, limit: 50, sort: 'sort', dir: 'asc' });
+  const inv = useInvalidate();
+  const toast = useToast();
+  const [form, setForm] = useState<any>(null);
+  const items = data?.items ?? [];
+  const setStatus = async (s: any, status: string) => { try { await api.patch(`/api/e/project_stages/${s.id}`, { status }); inv('project_stages', 'stats'); } catch (e) { toast.error(e); } };
+  return (
+    <Card padded={false} title="Этапы проекта" subtitle="Завершите этап — следующий станет текущим" actions={<Button size="sm" icon={<Plus className="size-4" />} onClick={() => setForm({ project_id: p.id, sort: items.length + 1, status: items.length ? 'pending' : 'active' })}>Этап</Button>}>
+      <ol className="divide-y divide-line">
+        {items.map((s: any, i: number) => (
+          <li key={s.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
+            <span className={cx('flex size-7 items-center justify-center rounded-full text-xs font-bold', s.status === 'done' ? 'bg-success text-white' : s.status === 'active' ? 'bg-primary text-primary-fg' : 'bg-surface-2 text-muted')}>{s.status === 'done' ? '✓' : i + 1}</span>
+            <button type="button" onClick={() => setForm(s)} className="min-w-0 flex-1 text-left font-semibold hover:text-primary">{s.name}</button>
+            <span className="text-xs text-muted">{date(s.date_from)} — {date(s.date_to)}</span>
+            {s.status === 'active' && <Button size="sm" variant="primary" onClick={() => setStatus(s, 'done')}>Завершить этап</Button>}
+            {s.status === 'pending' && <Button size="sm" onClick={() => setStatus(s, 'active')}>Начать</Button>}
+            {s.status === 'done' && <Button size="sm" variant="ghost" onClick={() => setStatus(s, 'active')}>Вернуть</Button>}
+          </li>
+        ))}
+        {!items.length && <li className="px-4 py-8 text-center text-sm text-faint">Этапов нет. Разбейте проект на этапы — так видно, где он сейчас.</li>}
+      </ol>
+      <RecordForm entity="project_stages" open={!!form} onClose={() => setForm(null)} initial={form} fields={['name', 'status', 'date_from', 'date_to']} size="md" />
+    </Card>
   );
 }

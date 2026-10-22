@@ -10,6 +10,7 @@ import * as bp from './services/bp.ts';
 import * as docs from './services/docs.ts';
 import * as misc from './services/misc.ts';
 import * as odata from './onec/odata.ts';
+import * as parity from './services/parity.ts';
 import * as cml from './onec/commerceml.ts';
 import { hashPassword } from './util.ts';
 
@@ -63,6 +64,7 @@ r('GET', '/api/e/:entity/:id', (c, p) => {
   const item = get(c, p.entity, p.id);
   if (p.entity === 'users') hideSalaries(c, [item]);
   if (p.entity === 'kb_articles') c.db.run(`UPDATE kb_articles SET views = COALESCE(views,0) + 1 WHERE id = ?`, [num(p.id)]);
+  if (p.entity === 'tasks') parity.markTaskViewed(c, item);
   return item;
 });
 r('POST', '/api/e/:entity', (c, p, req) => create(c, p.entity, req.body ?? {}));
@@ -88,7 +90,7 @@ r('GET', '/api/e/:entity/:id/timeline', (c, p) => {
   requirePerm(c, ent.module, 'read');
   const items = c.db.all(`SELECT a.*, u.name AS user_name, u.color AS user_color FROM activities a LEFT JOIN users u ON u.id = a.user_id
     WHERE a.entity_type = ? AND a.entity_id = ? ORDER BY a.id DESC LIMIT 200`, [p.entity, num(p.id)]);
-  return items.map((a) => ({ ...a, meta: parseJson(a.meta, null) }));
+  return items.map((a) => ({ ...a, meta: parseJson(a.meta, null), likes: parseJson(a.likes, []) }));
 });
 r('POST', '/api/e/:entity/:id/comment', (c, p, req) => {
   const ent = entity(p.entity);
@@ -96,7 +98,11 @@ r('POST', '/api/e/:entity/:id/comment', (c, p, req) => {
   const text = String(req.body?.text ?? '').trim();
   if (!text) fail(422, 'Введите текст');
   if (!getRaw(c.db, ent.key, p.id)) fail(404, 'Запись не найдена');
-  logActivity(c, ent.key, num(p.id), ['comment', 'call', 'meeting', 'email'].includes(req.body?.kind) ? req.body.kind : 'comment', text);
+  const kind = ['comment', 'call', 'meeting', 'email'].includes(req.body?.kind) ? req.body.kind : 'comment';
+  if (req.body?.parent_id) {
+    c.db.run(`INSERT INTO activities (entity_type, entity_id, kind, text, user_id, parent_id, created_at, updated_at, created_by) VALUES (?,?,?,?,?,?,?,?,?)`,
+      [ent.key, num(p.id), 'comment', text, c.user.id, Number(req.body.parent_id), nowIso(), nowIso(), c.user.id]);
+  } else logActivity(c, ent.key, num(p.id), kind, text);
   // mentions: @Имя Фамилия
   for (const u of c.db.all(`SELECT id, name FROM users WHERE is_active = 1`)) {
     if (text.includes('@' + u.name)) {
@@ -114,7 +120,10 @@ function linkFor(entityKey: string, id: number): string {
 }
 
 // ---------------- dashboard, search, notifications, calendar ----------------
-r('GET', '/api/dashboard', (c) => misc.dashboard(c));
+r('GET', '/api/dashboard', (c) => {
+  try { parity.processRecurring({ ...c, system: true }); } catch (e) { c.deps.log?.('recurring invoices failed', e); }
+  return misc.dashboard(c);
+});
 r('GET', '/api/search', (c, _p, req) => misc.search(c, req.query.q));
 r('GET', '/api/notifications', (c) => misc.notificationsFor(c));
 r('POST', '/api/notifications/read-all', (c) => misc.readAllNotifications(c));
@@ -183,6 +192,7 @@ r('POST', '/api/users/invite', async (c, _p, req) => {
   const b = req.body ?? {};
   if (c.db.get(`SELECT id FROM users WHERE lower(email) = lower(?)`, [b.email ?? ''])) fail(422, 'Сотрудник с таким email уже есть');
   const u = create(c, 'users', { name: b.name, email: b.email, role_id: b.role_id, department_id: b.department_id, position: b.position, phone: b.phone, is_active: 1, color: b.color });
+  create({ ...c, system: true }, 'invitations', { email: b.email, name: b.name, role_id: b.role_id, status: 'accepted', invited_by: c.user.id, user_id: u.id });
   await setPassword(c.db, u.id, String(b.password ?? ''));
   return u;
 });
@@ -203,6 +213,23 @@ r('POST', '/api/onec/test', (c) => odata.onecTest(c));
 r('POST', '/api/onec/sync', (c, _p, req) => odata.onecSync(c, req.body?.only));
 r('POST', '/api/onec/cml-import', (c, _p, req) => { requirePerm(c, 'settings', 'write'); return cml.importAny(c, String(req.body?.xml ?? '')); });
 r('GET', '/api/onec/cml-orders', (c) => { requirePerm(c, 'settings', 'read'); return { xml: cml.exportOrders(c) }; });
+
+// ---------------- parity features ----------------
+r('POST', '/api/tasks/from-template', (c, _p, req) => parity.taskFromTemplate(c, req.body ?? {}));
+r('GET', '/api/crm/activity-flags', (c) => parity.dealActivityFlags(c));
+r('GET', '/api/crm/counterparties', (c, _p, req) => parity.counterparties(c, req.query));
+r('GET', '/api/crm/report', (c, _p, req) => parity.crmReport(c, req.query));
+r('POST', '/api/deals/:id/offer', (c, p) => parity.offerFromDeal(c, num(p.id)));
+r('GET', '/api/projects/stages', (c, _p, req) => parity.projectStagesSummary(c, (req.query.ids ?? '').split(',').map(Number).filter(Boolean)));
+r('POST', '/api/projects/from-template', (c, _p, req) => parity.projectFromTemplate(c, req.body ?? {}));
+r('GET', '/api/finance/balance-sheet', (c, _p, req) => parity.balanceSheet(c, req.query));
+r('POST', '/api/finance/recurring/process', (c) => { requirePerm(c, 'finance', 'write'); return parity.processRecurring(c); });
+r('POST', '/api/finance/recurring/:id/run', (c, p) => { requirePerm(c, 'finance', 'write'); return parity.runRecurring(c, num(p.id)); });
+r('POST', '/api/offers/:id/invoice', (c, p) => parity.invoiceFromOffer(c, num(p.id)));
+r('GET', '/api/print/offer/:id', (c, p) => ({ html: parity.printOffer(c, num(p.id)) }));
+r('POST', '/api/activities/:id/like', (c, p) => parity.toggleLike(c, num(p.id)));
+r('GET', '/api/prefs/:key', (c, p) => parity.getPref(c, p.key));
+r('PUT', '/api/prefs/:key', (c, p, req) => parity.setPref(c, p.key, req.body));
 
 // ---------------- dispatcher ----------------
 export function systemUser(deps: Deps): User {

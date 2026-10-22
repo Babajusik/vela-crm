@@ -7,6 +7,7 @@ import { openDb } from './db.ts';
 import { init, handle, systemUser, drainWebhooks, type Deps } from '../src/core/index.ts';
 import { bootstrap } from '../src/core/seed.ts';
 import { cml, odata } from '../src/core/router.ts';
+import * as parity from '../src/core/services/parity.ts';
 import { incomingMessage } from '../src/core/services/misc.ts';
 import { userByToken } from '../src/core/services/auth.ts';
 import { create, getRaw } from '../src/core/crud.ts';
@@ -270,3 +271,5 @@ setInterval(async () => {
   try { await odata.onecSync(ctx); } catch (e) { deps.log?.('scheduled 1C sync failed', (e as Error).message); }
 }, 60_000);
 setInterval(() => { for (const [k, t] of cmlSessions) if (Date.now() - t > 3600_000) cmlSessions.delete(k); }, 600_000);
+// regular invoices are issued once their date comes
+setInterval(() => { try { parity.processRecurring({ db, user: systemUser(deps), deps, system: true }); } catch (e) { deps.log?.('recurring invoices failed', e); } }, 3600_000);

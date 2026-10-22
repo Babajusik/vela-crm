@@ -4,7 +4,8 @@ import { useAuth, useMeta } from '../../lib/state.tsx';
 import { EmptyState, PageHeader } from '../../ui/ui.tsx';
 import { EntityList } from '../../ui/data.tsx';
 import { compactMoney, money, todayIso } from '../../lib/format.ts';
-import { FinanceOverview, Operations, Accounts } from './Overview.tsx';
+import { FinanceOverview, Operations } from './Overview.tsx';
+import { AccountsOrgs, Balance, Directions, Money, OfferPage, Offers, Recurring } from './Money.tsx';
 import { Reports } from './Reports.tsx';
 import { PaymentCalendar } from './PaymentCalendar.tsx';
 import { Budgets } from './Budgets.tsx';
@@ -12,20 +13,16 @@ import { ImportStatement } from './ImportStatement.tsx';
 import { Payroll } from './Payroll.tsx';
 
 const TABS = [
-  { to: '/finance', label: 'Обзор', end: true }, { to: '/finance/operations', label: 'Операции' }, { to: '/finance/accounts', label: 'Счета и кассы' },
-  { to: '/finance/calendar', label: 'Платёжный календарь' }, { to: '/finance/reports', label: 'Отчёты' }, { to: '/finance/budgets', label: 'Бюджеты' },
+  { to: '/finance', label: 'Обзор', end: true }, { to: '/finance/money', label: 'Деньги' }, { to: '/finance/reports?tab=cashflow', label: 'Движение средств', default: true },
+  { to: '/finance/reports?tab=pnl', label: 'Прибыли и убытки' }, { to: '/finance/balance', label: 'Баланс' }, { to: '/finance/calendar', label: 'Платёжный календарь' },
+  { to: '/finance/recurring', label: 'Регулярные счета' }, { to: '/finance/offers', label: 'Предложения' }, { to: '/finance/budgets', label: 'Бюджеты' },
   { to: '/finance/payroll', label: 'Зарплата' }, { to: '/finance/advances', label: 'Подотчёт' }, { to: '/finance/loans', label: 'Кредиты и займы' },
   { to: '/finance/obligations', label: 'Обязательства' }, { to: '/finance/assets', label: 'Имущество' }, { to: '/finance/import', label: 'Загрузка выписки' },
-  { to: '/finance/categories', label: 'Статьи' }, { to: '/finance/legal', label: 'Юрлица' },
+  { to: '/finance/categories', label: 'Статьи учёта' }, { to: '/finance/directions', label: 'Направления' }, { to: '/finance/accounts', label: 'Счета и организации' },
 ];
 
 export function FinHeader({ title, subtitle, actions }: { title: string; subtitle?: string; actions?: React.ReactNode }) {
-  return (
-    <>
-      <PageHeader title={title} subtitle={subtitle} actions={actions} />
-      <ModuleTabs tabs={TABS} />
-    </>
-  );
+  return <PageHeader title={title} subtitle={subtitle} actions={actions} tabs={<ModuleTabs tabs={TABS} />} />;
 }
 
 function Simple({ entity, title, subtitle, columns, defaults, formFields }: { entity: string; title: string; subtitle: string; columns: any[]; defaults?: any; formFields?: string[] }) {
@@ -47,7 +44,13 @@ export default function Finance() {
     <Routes>
       <Route index element={<FinanceOverview />} />
       <Route path="operations" element={<Operations />} />
-      <Route path="accounts" element={<Accounts />} />
+      <Route path="money" element={<Money />} />
+      <Route path="balance" element={<Balance />} />
+      <Route path="recurring" element={<Recurring />} />
+      <Route path="offers" element={<Offers />} />
+      <Route path="offers/:id" element={<OfferPage />} />
+      <Route path="directions" element={<Directions />} />
+      <Route path="accounts" element={<AccountsOrgs />} />
       <Route path="calendar" element={<PaymentCalendar />} />
       <Route path="reports" element={<Reports />} />
       <Route path="budgets" element={<Budgets />} />

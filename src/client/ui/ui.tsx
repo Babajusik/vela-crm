@@ -351,17 +351,54 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
 export const useToast = () => useContext(ToastCtx);
 
-export function PageHeader({ title, subtitle, actions, children }: { title: ReactNode; subtitle?: ReactNode; actions?: ReactNode; children?: ReactNode }) {
+/** White header band across the page: title, sub-navigation under it, actions on the right */
+export function PageHeader({ title, subtitle, actions, children, tabs }: { title: ReactNode; subtitle?: ReactNode; actions?: ReactNode; children?: ReactNode; tabs?: ReactNode }) {
   return (
-    <div className="mb-5">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+    <div className="-mx-4 -mt-5 mb-5 border-b border-line bg-surface px-4 pt-4 sm:-mx-6 sm:px-6 lg:-mt-6">
+      <div className={cx('flex flex-wrap items-start justify-between gap-3', !tabs && 'pb-4')}>
         <div className="min-w-0">
-          <h1 className="text-2xl font-extrabold tracking-tight">{title}</h1>
+          <h1 className="text-[22px] font-extrabold leading-tight tracking-tight">{title}</h1>
           {subtitle && <p className="mt-1 text-sm text-muted">{subtitle}</p>}
         </div>
         {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
       </div>
-      {children && <div className="mt-4">{children}</div>}
+      {tabs && <div className="mt-3">{tabs}</div>}
+      {children && <div className="pb-4">{children}</div>}
     </div>
   );
+}
+
+/** Record card sliding over a list (tasks, deals). Full screen on phones. */
+export function SlideOver({ onClose, children, width = 1080 }: { onClose: () => void; children: ReactNode; width?: number }) {
+  useEscape(true, onClose);
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = prev; };
+  }, []);
+  return createPortal(
+    <div className="fixed inset-0 top-14 z-[35] md:left-[72px]">
+      <div className="absolute inset-0 bg-ink-950/25 anim-fade" onMouseDown={onClose} />
+      <div className="absolute inset-y-0 right-0 flex w-full anim-slide" style={{ maxWidth: width }}>
+        <button type="button" aria-label="Закрыть карточку" onClick={onClose}
+          className="absolute -left-12 top-3 hidden size-9 items-center justify-center rounded-full bg-surface text-muted shadow-lg hover:text-fg 2xl:flex"><X className="size-5" /></button>
+        <div className="relative h-full w-full overflow-y-auto bg-canvas shadow-2xl">
+          <button type="button" aria-label="Закрыть карточку" onClick={onClose} className="absolute right-3 top-3 z-10 flex size-9 items-center justify-center rounded-full bg-surface-2 text-muted shadow hover:text-fg 2xl:hidden"><X className="size-5" /></button>
+          {children}
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+export function useMediaQuery(q: string) {
+  const [m, setM] = useState(() => typeof window !== 'undefined' && window.matchMedia(q).matches);
+  useEffect(() => {
+    const mq = window.matchMedia(q);
+    const h = () => setM(mq.matches);
+    mq.addEventListener('change', h);
+    return () => mq.removeEventListener('change', h);
+  }, [q]);
+  return m;
 }

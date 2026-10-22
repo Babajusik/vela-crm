@@ -147,3 +147,6 @@ body {
 
 .kanban-col { min-width: 280px; width: 280px; }
 .drag-over { outline: 2px dashed var(--c-primary); outline-offset: -4px; }
+@keyframes vela-slide-l { from { transform: translateX(-12px); opacity: 0; } to { transform: none; opacity: 1; } }
+.anim-slide-l { animation: vela-slide-l .16s ease-out; }
+@media (prefers-reduced-motion: reduce) { .anim-slide-l { animation: none; } }

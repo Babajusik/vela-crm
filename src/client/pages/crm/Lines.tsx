@@ -22,7 +22,7 @@ export function totals(lines: any[], vatMode = 'included') {
 }
 
 export function LinesEditor({ entity, parentField, parentId, vatMode = 'included', readOnly, withDiscount = true, also = [] }: {
-  entity: 'deal_products' | 'invoice_items' | 'act_items'; parentField: string; parentId: number; vatMode?: string; readOnly?: boolean; withDiscount?: boolean; also?: string[];
+  entity: 'deal_products' | 'invoice_items' | 'act_items' | 'offer_items'; parentField: string; parentId: number; vatMode?: string; readOnly?: boolean; withDiscount?: boolean; also?: string[];
 }) {
   const { data } = useList(entity, { [parentField]: parentId, limit: 500, sort: 'id', dir: 'asc' });
   const inv = useInvalidate();

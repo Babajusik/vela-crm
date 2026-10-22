@@ -47,8 +47,15 @@ export interface Hooks {
   afterDelete?: (ctx: Ctx, row: Record<string, any>) => void;
 }
 export const HOOKS: Record<string, Hooks> = {};
+/** Registers hooks; several modules may hook the same entity — handlers run in registration order. */
 export function hook(entityKey: string, h: Hooks) {
-  HOOKS[entityKey] = { ...HOOKS[entityKey], ...h };
+  const cur: Record<string, any> = HOOKS[entityKey] ?? {};
+  const next: Record<string, any> = { ...cur };
+  for (const [name, fn] of Object.entries(h) as [string, (...a: any[]) => void][]) {
+    const prev = cur[name] as ((...a: any[]) => void) | undefined;
+    next[name] = prev ? (...args: any[]) => { prev(...args); fn(...args); } : fn;
+  }
+  HOOKS[entityKey] = next as Hooks;
 }
 
 export type EventListener = (ctx: Ctx, event: string, payload: Record<string, any>) => void;
@@ -209,6 +216,10 @@ export function buildWhere(ent: Entity, query: Record<string, string>, ctx?: Ctx
       // JSON array contains value (users, tags)
       conds.push(`${col} LIKE ?`);
       params.push(`%${JSON.stringify(f.type === 'users' ? Number(rawVal) : rawVal)}%`);
+    } else if (op === 'ne') {
+      // "not equal" keeps empty values: is_archived__ne=1 must return rows where the flag was never set
+      conds.push(`(${col} IS NULL OR ${col} != ?)`);
+      params.push(rawVal);
     } else if (op && OPS[op]) {
       conds.push(`${col} ${OPS[op]} ?`);
       params.push(rawVal);

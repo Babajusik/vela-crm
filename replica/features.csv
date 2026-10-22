@@ -85,3 +85,27 @@ Zoom и видеовстречи,integrations,could,yes,skip,сторонний 
 Мобильные приложения,mobile,could,yes,skip,веб-версия адаптивная
 Кабинет партнёра,portal,could,yes,skip,партнёрская программа самого Аспро
 Маркетплейс сторонних приложений,integrations,could,yes,skip,сеть партнёров не воспроизводится
+Задачи: планирование с левыми фильтрами,tasks,must,yes,yes,
+Задачи: соисполнители и прогресс,tasks,should,yes,yes,
+Задачи: связи задач,tasks,should,yes,yes,
+Задачи: шаблоны и архив,tasks,should,yes,yes,
+Задачи: выплата по задаче,tasks,could,yes,yes,
+CRM: дела (звонки и встречи по клиентам),crm,must,yes,yes,
+CRM: архив сделок и вкладки воронки,crm,should,yes,yes,
+CRM: все контрагенты,crm,should,yes,yes,
+CRM: отчёт по продажам,crm,should,yes,yes,
+Лента: лайки и ответы,crm,could,yes,yes,
+Проекты: этапы,projects,should,yes,yes,
+Проекты: портфели,projects,could,yes,yes,
+Проекты: шаблоны,projects,should,yes,yes,
+Финансы: разбивка операции по статьям,finance,should,yes,yes,
+Финансы: баланс,finance,should,yes,yes,
+Финансы: регулярные счета,finance,should,yes,yes,
+Финансы: коммерческие предложения,finance,should,yes,yes,
+Финансы: направления,finance,could,yes,yes,
+Команда: приглашения,team,should,yes,yes,
+База знаний: несколько баз,kb,should,yes,yes,
+Каталог модулей (вкл/выкл),settings,could,yes,yes,
+Рабочие столы с виджетами,dashboard,should,yes,yes,
+Выдвижные меню модулей второго уровня,layout,must,yes,yes,
+Адаптивная мобильная версия,layout,must,no,yes,у оригинала веб-версия не адаптивна

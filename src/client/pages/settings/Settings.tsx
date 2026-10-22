@@ -13,11 +13,11 @@ import OneC from './OneC.tsx';
 const TABS = [
   { to: '/settings', label: 'Компания', end: true }, { to: '/settings/onec', label: 'Интеграция с 1С' }, { to: '/settings/roles', label: 'Роли и права' },
   { to: '/settings/pipelines', label: 'Воронки' }, { to: '/settings/automations', label: 'Автодействия' }, { to: '/settings/fields', label: 'Свои поля' },
-  { to: '/settings/api', label: 'API и вебхуки' }, { to: '/settings/backup', label: 'Резервная копия' },
+  { to: '/settings/api', label: 'API и вебхуки' }, { to: '/settings/modules', label: 'Модули' }, { to: '/settings/backup', label: 'Резервная копия' },
 ];
 
 export function SettingsHeader({ title, subtitle, actions }: { title: string; subtitle?: string; actions?: React.ReactNode }) {
-  return <><PageHeader title={title} subtitle={subtitle} actions={actions} /><ModuleTabs tabs={TABS} /></>;
+  return <PageHeader title={title} subtitle={subtitle} actions={actions} tabs={<ModuleTabs tabs={TABS} />} />;
 }
 
 export default function Settings() {
@@ -33,6 +33,7 @@ export default function Settings() {
       <Route path="fields" element={<CustomFields />} />
       <Route path="api" element={<ApiKeys />} />
       <Route path="backup" element={<Backup />} />
+      <Route path="modules" element={<Modules />} />
       <Route path="*" element={<Navigate to="/settings" replace />} />
     </Routes>
   );
@@ -352,6 +353,52 @@ function Backup() {
           <Textarea rows={3} value={json ? `${json.slice(0, 200)}…` : ''} readOnly placeholder="Файл не выбран" />
           <Button variant="danger" className="mt-3" disabled={!json} loading={busy} onClick={restore}>Восстановить</Button>
         </Card>
+      </div>
+    </div>
+  );
+}
+
+const MODULE_INFO: { key: string; label: string; text: string }[] = [
+  { key: 'tasks', label: 'Задачи', text: 'Поручения, канбан, Гант, шаблоны и учёт времени' },
+  { key: 'crm', label: 'CRM', text: 'Воронки, сделки, дела, компании, контакты, счета, веб-формы' },
+  { key: 'projects', label: 'Проекты', text: 'Этапы, вехи, спринты, портфели, рентабельность' },
+  { key: 'finance', label: 'Финансы', text: 'Деньги, ДДС, ОПиУ, баланс, бюджеты, регулярные счета' },
+  { key: 'team', label: 'Команда', text: 'Сотрудники, структура, приглашения, отсутствия' },
+  { key: 'kb', label: 'База знаний', text: 'Регламенты и курсы для сотрудников' },
+  { key: 'calendar', label: 'Календарь', text: 'Встречи и события' }, { key: 'messenger', label: 'Мессенджер', text: 'Чаты команды' },
+  { key: 'communications', label: 'Коммуникации', text: 'Диалоги с клиентами из мессенджеров' }, { key: 'mail', label: 'Почта', text: 'Письма, привязанные к клиентам' },
+  { key: 'files', label: 'Файлы', text: 'Общее хранилище' }, { key: 'catalog', label: 'Каталог', text: 'Товары, услуги, склад' },
+  { key: 'lists', label: 'Списки', text: 'Свои реестры и справочники' }, { key: 'time', label: 'Тайм-трекер', text: 'Учёт рабочего времени' },
+  { key: 'bp', label: 'Бизнес-процессы', text: 'Согласования и цепочки действий' }, { key: 'documents', label: 'Документы', text: 'Шаблоны договоров и КП' },
+  { key: 'notes', label: 'Заметки', text: 'Личные заметки' }, { key: 'portal', label: 'Кабинет клиента', text: 'Счета, акты и обращения клиентов' },
+];
+
+function Modules() {
+  const { settings, refresh, can } = useAuth();
+  const toast = useToast();
+  const disabled: string[] = settings?.modules?.disabled ?? [];
+  const admin = can('settings', 'admin');
+  const toggle = async (key: string) => {
+    const next = disabled.includes(key) ? disabled.filter((k) => k !== key) : [...disabled, key];
+    try { await api.put('/api/settings/modules', { disabled: next }); await refresh(); toast.success(next.includes(key) ? 'Модуль выключен' : 'Модуль включён'); }
+    catch (e) { toast.error(e); }
+  };
+  return (
+    <div>
+      <SettingsHeader title="Модули" subtitle="Оставьте только то, чем пользуется компания: выключенные модули пропадут из меню у всех" />
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        {MODULE_INFO.map((m) => {
+          const on = !disabled.includes(m.key);
+          return (
+            <div key={m.key} className={cx('flex items-start gap-3 rounded-2xl border bg-surface p-4', on ? 'border-line' : 'border-dashed border-line-strong opacity-70')}>
+              <div className="min-w-0 flex-1"><p className="font-bold">{m.label}</p><p className="text-sm text-muted">{m.text}</p></div>
+              <button type="button" role="switch" aria-checked={on} aria-label={m.label} disabled={!admin} onClick={() => toggle(m.key)}
+                className={cx('relative mt-1 h-5 w-9 shrink-0 rounded-full transition-colors', on ? 'bg-primary' : 'bg-line-strong')}>
+                <span className={cx('absolute top-0.5 size-4 rounded-full bg-white shadow transition-transform', on ? 'translate-x-4.5' : 'translate-x-0.5')} />
+              </button>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Link, Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom';
+import { Link, Navigate, Route, Routes, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Check, ChevronLeft, ChevronRight, Mail, Phone, Plus, UserPlus } from 'lucide-react';
 import { api } from '../api.ts';
 import { addDaysIso, date, parseDate, toLocalDate, todayIso, WEEKDAYS } from '../lib/format.ts';
@@ -10,11 +10,11 @@ import { RecordForm } from '../ui/fields.tsx';
 import { ModuleTabs } from '../layout/Layout.tsx';
 
 const TABS = [{ to: '/team', label: 'Сотрудники', end: true }, { to: '/team/structure', label: 'Структура компании' }, { to: '/team/groups', label: 'Группы' },
-  { to: '/team/absences', label: 'Отсутствия' }, { to: '/team/onboarding', label: 'Онбординг' }];
+  { to: '/team/invitations', label: 'Приглашения' }, { to: '/team/absences', label: 'Отсутствия' }, { to: '/team/onboarding', label: 'Онбординг' }];
 const ABS: Record<string, [string, string]> = { vacation: ['Отпуск', '#10b981'], sick: ['Больничный', '#ef4444'], trip: ['Командировка', '#0ea5e9'], dayoff: ['Отгул', '#f59e0b'], remote: ['Удалёнка', '#a855f7'] };
 
 function Header({ title, subtitle, actions }: { title: string; subtitle?: string; actions?: React.ReactNode }) {
-  return <><PageHeader title={title} subtitle={subtitle} actions={actions} /><ModuleTabs tabs={TABS} /></>;
+  return <PageHeader title={title} subtitle={subtitle} actions={actions} tabs={<ModuleTabs tabs={TABS} />} />;
 }
 
 export default function Team() {
@@ -23,6 +23,7 @@ export default function Team() {
       <Route index element={<Employees />} />
       <Route path="structure" element={<Structure />} />
       <Route path="groups" element={<Groups />} />
+      <Route path="invitations" element={<Invitations />} />
       <Route path="absences" element={<Absences />} />
       <Route path="onboarding" element={<Onboarding />} />
       <Route path=":id" element={<Profile />} />
@@ -33,7 +34,8 @@ export default function Team() {
 
 function Employees() {
   const { can } = useAuth();
-  const [invite, setInvite] = useState(false);
+  const [sp] = useSearchParams();
+  const [invite, setInvite] = useState(sp.get('invite') === '1');
   return (
     <div>
       <Header title="Команда" subtitle="Сотрудники компании и их роли"
@@ -265,3 +267,19 @@ function Onboarding() {
   );
 }
 
+
+function Invitations() {
+  const { can } = useAuth();
+  const toast = useToast();
+  const inv = useInvalidate();
+  const [invite, setInvite] = useState(false);
+  return (
+    <div>
+      <Header title="Приглашения" subtitle="Кого позвали в систему и кто уже пришёл" actions={can('team', 'admin') && <Button variant="primary" icon={<UserPlus className="size-4" />} onClick={() => setInvite(true)}>Пригласить</Button>} />
+      <EntityList entity="invitations" onCreate={() => setInvite(true)} createLabel="Пригласить"
+        columns={['email', 'name', 'role_id', 'status', 'invited_by', { key: 'created_at', label: 'Отправлено', render: (r: any) => date(r.created_at) },
+          { key: 'act', label: '', sortable: false, render: (r: any) => r.status === 'pending' && can('team', 'admin') ? <Button size="xs" variant="ghost" onClick={async (e) => { e.stopPropagation(); await api.patch('/api/e/invitations/' + r.id, { status: 'revoked' }); inv('invitations'); toast.success('Приглашение отозвано'); }}>Отозвать</Button> : null }]} />
+      <InviteDialog open={invite} onClose={() => setInvite(false)} />
+    </div>
+  );
+}

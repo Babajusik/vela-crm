@@ -82,9 +82,9 @@ export function summary(ctx: Ctx, q: { from?: string; to?: string }) {
     const income = round2(r?.income ?? 0), expense = round2(r?.expense ?? 0);
     return { month: m, income, expense, net: round2(income - expense) };
   });
-  const topExpense = ctx.db.all(`SELECT c.name, SUM(o.amount) AS amount FROM fin_operations o LEFT JOIN fin_categories c ON c.id = o.category_id
+  const topExpense = ctx.db.all(`SELECT c.name, SUM(o.amount) AS amount FROM fin_lines o LEFT JOIN fin_categories c ON c.id = o.category_id
     WHERE o.kind='expense' AND o.status='fact' AND o.date >= ? AND o.date <= ? GROUP BY o.category_id ORDER BY amount DESC LIMIT 8`, [from, to]);
-  const topIncome = ctx.db.all(`SELECT c.name, SUM(o.amount) AS amount FROM fin_operations o LEFT JOIN fin_categories c ON c.id = o.category_id
+  const topIncome = ctx.db.all(`SELECT c.name, SUM(o.amount) AS amount FROM fin_lines o LEFT JOIN fin_categories c ON c.id = o.category_id
     WHERE o.kind='income' AND o.status='fact' AND o.date >= ? AND o.date <= ? GROUP BY o.category_id ORDER BY amount DESC LIMIT 8`, [from, to]);
   const accounts = balances(ctx);
   const planned = ctx.db.all(`SELECT kind, SUM(amount) AS amount FROM fin_operations WHERE status='planned' AND date >= ? AND date <= ? GROUP BY kind`, [today(), addDays(today(), 30)]);
@@ -103,7 +103,7 @@ export function summary(ctx: Ctx, q: { from?: string; to?: string }) {
 interface ReportRow { id: number | null; name: string; kind: string; activity?: string; values: Record<string, number>; total: number; level?: number }
 
 /** Отчёт о движении денежных средств (ДДС) по месяцам */
-export function cashflowReport(ctx: Ctx, q: { from?: string; to?: string; project_id?: string; account_id?: string }) {
+export function cashflowReport(ctx: Ctx, q: { from?: string; to?: string; project_id?: string; account_id?: string; direction_id?: string }) {
   requirePerm(ctx, 'finance', 'read');
   const def = monthRange(6);
   const from = q.from ?? def.from, to = q.to ?? def.to;
@@ -112,8 +112,9 @@ export function cashflowReport(ctx: Ctx, q: { from?: string; to?: string; projec
   const params: unknown[] = [from, to];
   if (q.project_id) { extra.push('o.project_id = ?'); params.push(Number(q.project_id)); }
   if (q.account_id) { extra.push('o.account_id = ?'); params.push(Number(q.account_id)); }
+  if (q.direction_id) { extra.push('o.direction_id = ?'); params.push(Number(q.direction_id)); }
   const rows = ctx.db.all(`SELECT o.kind, o.category_id, c.name, c.activity, substr(o.date,1,7) AS month, SUM(o.amount) AS amount
-    FROM fin_operations o LEFT JOIN fin_categories c ON c.id = o.category_id
+    FROM fin_lines o LEFT JOIN fin_categories c ON c.id = o.category_id
     WHERE o.status='fact' AND o.kind IN ('income','expense') AND o.date >= ? AND o.date <= ? ${extra.length ? 'AND ' + extra.join(' AND ') : ''}
     GROUP BY o.kind, o.category_id, month`, params);
   const acts = [['operating', 'Операционная деятельность'], ['investing', 'Инвестиционная деятельность'], ['financing', 'Финансовая деятельность']];
@@ -135,7 +136,7 @@ export function cashflowReport(ctx: Ctx, q: { from?: string; to?: string; projec
   const opening: Record<string, number> = {}, closing: Record<string, number> = {}, netAll: Record<string, number> = {};
   for (const m of cols) {
     const start = m + '-01';
-    opening[m] = q.account_id || q.project_id ? 0 : totalBalance(ctx, addDays(start, -1));
+    opening[m] = q.account_id || q.project_id || q.direction_id ? 0 : totalBalance(ctx, addDays(start, -1));
     netAll[m] = round2(sections.reduce((s, sec) => s + (sec.net[m] ?? 0), 0));
     closing[m] = round2(opening[m] + netAll[m]);
   }
@@ -143,7 +144,7 @@ export function cashflowReport(ctx: Ctx, q: { from?: string; to?: string; projec
 }
 
 /** Отчёт о прибылях и убытках (кассовый метод: по оплатам) */
-export function pnlReport(ctx: Ctx, q: { from?: string; to?: string; project_id?: string }) {
+export function pnlReport(ctx: Ctx, q: { from?: string; to?: string; project_id?: string; direction_id?: string }) {
   requirePerm(ctx, 'finance', 'read');
   const def = monthRange(6);
   const from = q.from ?? def.from, to = q.to ?? def.to;
@@ -151,8 +152,9 @@ export function pnlReport(ctx: Ctx, q: { from?: string; to?: string; project_id?
   const params: unknown[] = [from, to];
   let extra = '';
   if (q.project_id) { extra = 'AND o.project_id = ?'; params.push(Number(q.project_id)); }
+  if (q.direction_id) { extra += ' AND o.direction_id = ?'; params.push(Number(q.direction_id)); }
   const rows = ctx.db.all(`SELECT o.kind, o.category_id, c.name, substr(o.date,1,7) AS month, SUM(o.amount) AS amount
-    FROM fin_operations o LEFT JOIN fin_categories c ON c.id = o.category_id
+    FROM fin_lines o LEFT JOIN fin_categories c ON c.id = o.category_id
     WHERE o.status='fact' AND o.kind IN ('income','expense') AND COALESCE(c.in_pnl,1) = 1 AND o.date >= ? AND o.date <= ? ${extra}
     GROUP BY o.kind, o.category_id, month`, params);
   const build = (kind: string) => {
@@ -230,7 +232,7 @@ export function budgetPlanFact(ctx: Ctx, budgetId: number) {
   const params: unknown[] = [`${b!.year}-01-01`, `${b!.year}-12-31`];
   let extra = '';
   if (b!.project_id) { extra = 'AND project_id = ?'; params.push(b!.project_id); }
-  const facts = ctx.db.all(`SELECT category_id, CAST(substr(date,6,2) AS INTEGER) AS month, SUM(amount) AS amount FROM fin_operations
+  const facts = ctx.db.all(`SELECT category_id, CAST(substr(date,6,2) AS INTEGER) AS month, SUM(amount) AS amount FROM fin_lines
     WHERE status='fact' AND kind IN ('income','expense') AND date >= ? AND date <= ? ${extra} GROUP BY category_id, month`, params);
   const cats = new Map<number, { id: number; name: string; kind: string; plan: number[]; fact: number[] }>();
   const ensure = (id: number, name: string, kind: string) => {

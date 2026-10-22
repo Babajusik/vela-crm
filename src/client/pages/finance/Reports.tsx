@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { Download } from 'lucide-react';
 import { saveText } from '../../api.ts';
 import { money, monthLabel, toLocalDate } from '../../lib/format.ts';
@@ -22,13 +22,15 @@ function csv(rows: (string | number)[][], name: string) {
 }
 
 export function Reports() {
-  const [tab, setTab] = useState<R>('cashflow');
+  const [sp, setSp] = useSearchParams();
+  const tab = (sp.get('tab') as R) || 'cashflow';
+  const setTab = (t: R) => { sp.set('tab', t); setSp(sp, { replace: true }); };
   const [range, setRange] = useState(defaultRange);
   const [project, setProject] = useState('');
   const projects = useList('projects', { limit: 200 }).data?.items ?? [];
   return (
     <div>
-      <FinHeader title="Отчёты" subtitle="Управленческая отчётность: ДДС, прибыль, рентабельность проектов" />
+      <FinHeader title={tab === 'pnl' ? 'Прибыли и убытки' : tab === 'projects' ? 'Рентабельность проектов' : 'Движение средств'} subtitle="Управленческая отчётность: ДДС, прибыль, рентабельность проектов" />
       <Tabs value={tab} onChange={setTab} className="mb-4" tabs={[{ value: 'cashflow', label: 'Движение денег (ДДС)' }, { value: 'pnl', label: 'Прибыли и убытки (ОПиУ)' }, { value: 'projects', label: 'Рентабельность проектов' }]} />
       {tab !== 'projects' && (
         <div className="mb-4 flex flex-wrap items-end gap-3">

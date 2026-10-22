@@ -279,7 +279,7 @@ export function backupRestore(ctx: Ctx, dump: { app?: string; tables?: Record<st
 }
 
 // ---------------- settings ----------------
-const PUBLIC_SETTINGS = new Set(['company', 'appearance', 'lost_reasons', 'dashboard']);
+const PUBLIC_SETTINGS = new Set(['company', 'appearance', 'lost_reasons', 'dashboard', 'modules']);
 
 export function getSetting(ctx: Ctx, key: string): unknown {
   return parseJson(ctx.db.get(`SELECT value FROM settings WHERE key = ?`, [key])?.value, null);

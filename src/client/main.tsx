@@ -11,7 +11,10 @@ import { PublicForm } from './pages/PublicForm.tsx';
 
 const Dashboard = lazy(() => import('./pages/Dashboard.tsx'));
 const Tasks = lazy(() => import('./pages/Tasks.tsx'));
-const TaskPage = lazy(() => import('./pages/TaskPage.tsx'));
+const TaskTemplates = lazy(() => import('./pages/Tasks.tsx').then((m) => ({ default: m.TaskTemplates })));
+const TaskArchive = lazy(() => import('./pages/Tasks.tsx').then((m) => ({ default: m.TaskArchive })));
+const Portfolios = lazy(() => import('./pages/Projects.tsx').then((m) => ({ default: m.Portfolios })));
+const ProjectTemplates = lazy(() => import('./pages/Projects.tsx').then((m) => ({ default: m.ProjectTemplates })));
 const Crm = lazy(() => import('./pages/crm/Crm.tsx'));
 const Projects = lazy(() => import('./pages/Projects.tsx'));
 const ProjectPage = lazy(() => import('./pages/ProjectPage.tsx'));
@@ -44,9 +47,13 @@ function Guard() {
         <Route element={<Layout />}>
           <Route index element={<Dashboard />} />
           <Route path="tasks" element={<Tasks />} />
-          <Route path="tasks/:id" element={<TaskPage />} />
+          <Route path="tasks/templates" element={<TaskTemplates />} />
+          <Route path="tasks/archive" element={<TaskArchive />} />
+          <Route path="tasks/:id" element={<Tasks />} />
           <Route path="crm/*" element={<Crm />} />
           <Route path="projects" element={<Projects />} />
+          <Route path="projects/portfolios" element={<Portfolios />} />
+          <Route path="projects/templates" element={<ProjectTemplates />} />
           <Route path="projects/:id" element={<ProjectPage />} />
           <Route path="finance/*" element={<Finance />} />
           <Route path="team/*" element={<Team />} />

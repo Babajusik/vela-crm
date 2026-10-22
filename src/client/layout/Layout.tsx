@@ -1,100 +1,301 @@
-import { useEffect, useState, type ReactNode } from 'react';
-import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { Bell, BookOpen, Briefcase, CalendarDays, CheckSquare, ChevronsLeft, ChevronsRight, Clock, FileText, Folder, FolderKanban, GitBranch, Inbox,
-  LayoutDashboard, ListChecks, LogOut, Mail, Menu, MessageCircle, Moon, Package, Plus, Search, Settings, StickyNote, Sun, Target, UserCircle2, Users,
-  Wallet, Square, X, KeyRound, RotateCcw } from 'lucide-react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { Bell, BookOpen, ChevronRight, CircleHelp, FolderKanban, Grid3X3, Home, KeyRound, ListTodo, LogOut, Mail, MessageCircle, Moon, Plus, RotateCcw,
+  Search, Settings, Square, Sun, Target, UserCircle2, Users, Wallet, X } from 'lucide-react';
 import { api, IS_DEMO } from '../api.ts';
-import { minutes, relative } from '../lib/format.ts';
-import { useApi, useAuth, useInvalidate } from '../lib/state.tsx';
+import { deadlineInfo, minutes, relative } from '../lib/format.ts';
+import { useApi, useAuth, useInvalidate, useList } from '../lib/state.tsx';
 import { Avatar, Button, FormRow, IconButton, Input, Kbd, MenuItem, Modal, Popover, cx, useToast } from '../ui/ui.tsx';
 import { RecordForm } from '../ui/fields.tsx';
-import { Logo } from './Logo.tsx';
 import { ErrorBoundary } from '../ui/ErrorBoundary.tsx';
+import { Logo } from './Logo.tsx';
+import { EXTRA, MENUS, RAIL, type ModuleMenu } from './menus.tsx';
 
-interface NavItem { to: string; label: string; icon: ReactNode; module: string; match?: string }
-const NAV: NavItem[] = [
-  { to: '/', label: 'Рабочий стол', icon: <LayoutDashboard />, module: 'dashboard' },
-  { to: '/tasks', label: 'Задачи', icon: <CheckSquare />, module: 'tasks' },
-  { to: '/crm/deals', label: 'CRM', icon: <Target />, module: 'crm', match: '/crm' },
-  { to: '/projects', label: 'Проекты', icon: <FolderKanban />, module: 'projects' },
-  { to: '/finance', label: 'Финансы', icon: <Wallet />, module: 'finance' },
-  { to: '/team', label: 'Команда', icon: <Users />, module: 'team' },
-  { to: '/calendar', label: 'Календарь', icon: <CalendarDays />, module: 'calendar' },
-  { to: '/messenger', label: 'Мессенджер', icon: <MessageCircle />, module: 'messenger' },
-  { to: '/communications', label: 'Коммуникации', icon: <Inbox />, module: 'communications' },
-  { to: '/mail', label: 'Почта', icon: <Mail />, module: 'mail' },
-  { to: '/kb', label: 'База знаний', icon: <BookOpen />, module: 'kb' },
-];
-const MORE: NavItem[] = [
-  { to: '/files', label: 'Файлы', icon: <Folder />, module: 'files' },
-  { to: '/catalog', label: 'Каталог', icon: <Package />, module: 'catalog' },
-  { to: '/lists', label: 'Списки', icon: <ListChecks />, module: 'lists' },
-  { to: '/time', label: 'Тайм-трекер', icon: <Clock />, module: 'time' },
-  { to: '/bp', label: 'Бизнес-процессы', icon: <GitBranch />, module: 'bp' },
-  { to: '/documents', label: 'Документы', icon: <FileText />, module: 'documents' },
-  { to: '/notes', label: 'Заметки', icon: <StickyNote />, module: 'notes' },
-  { to: '/portal', label: 'Кабинет клиента', icon: <Briefcase />, module: 'portal' },
-];
+const RAIL_ICONS: Record<string, ReactNode> = {
+  start: <Home />, tasks: <ListTodo />, crm: <Target />, projects: <FolderKanban />, finance: <Wallet />, team: <Users />, kb: <BookOpen />, more: <Grid3X3 />,
+};
+const MODULE_PATHS: Record<string, string[]> = {
+  start: ['/'], tasks: ['/tasks'], crm: ['/crm'], projects: ['/projects'], finance: ['/finance'], team: ['/team'], kb: ['/kb'],
+  more: ['/files', '/catalog', '/lists', '/time', '/mail', '/communications', '/messenger', '/calendar', '/bp', '/documents', '/notes', '/portal', '/settings'],
+};
 
-function SideLink({ item, collapsed, onClick }: { item: NavItem; collapsed: boolean; onClick?: () => void }) {
-  const loc = useLocation();
-  const active = item.to === '/' ? loc.pathname === '/' : loc.pathname.startsWith(item.match ?? item.to);
+export function useModules() {
+  const { settings, can } = useAuth();
+  const disabled: string[] = settings?.modules?.disabled ?? [];
+  return { enabled: (m: string) => !disabled.includes(m) && can(m), disabled };
+}
+
+function isMobileWidth() { return typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches; }
+export function useIsMobile() {
+  const [m, setM] = useState(isMobileWidth);
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 767px)');
+    const h = () => setM(mq.matches);
+    mq.addEventListener('change', h);
+    return () => mq.removeEventListener('change', h);
+  }, []);
+  return m;
+}
+
+// ---------------- flyout content ----------------
+function MenuCounts() {
+  const { user } = useAuth();
+  const accept = useList('tasks', { author_id: user!.id, status: 'review', limit: 1, expand: 0 }).data?.total ?? 0;
+  const activities = useList('crm_activities', { responsible_id: user!.id, is_done: 0, limit: 1, expand: 0 }).data?.total ?? 0;
+  return { accept, activities } as Record<string, number>;
+}
+
+function TodayTasks({ close }: { close: () => void }) {
+  const { user } = useAuth();
+  const today = new Date();
+  const end = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}T23:59`;
+  const { data } = useList('tasks', { assignee_id: user!.id, status__ne: 'done', deadline__lte: end, limit: 6, sort: 'deadline', dir: 'asc', is_archived__ne: 1 });
+  const items = data?.items ?? [];
   return (
-    <NavLink to={item.to} onClick={onClick} title={collapsed ? item.label : undefined}
-      className={cx('group relative flex h-9 items-center gap-3 rounded-lg px-2.5 text-[13.5px] font-semibold transition-colors [&>svg]:size-[18px] [&>svg]:shrink-0',
-        active ? 'bg-white/10 text-white' : 'text-side-muted hover:bg-white/5 hover:text-side-fg', collapsed && 'justify-center px-0')}>
-      {active && <span className="absolute -left-3 top-1.5 h-6 w-1 rounded-r-full bg-brand-400" />}
-      {item.icon}
-      {!collapsed && <span className="truncate">{item.label}</span>}
-    </NavLink>
+    <div className="border-t border-line px-3 pb-2 pt-3">
+      <p className="mb-1.5 px-2 text-xs font-semibold text-faint">Сегодня</p>
+      {items.map((t: any) => {
+        const dl = deadlineInfo(t.deadline);
+        return (
+          <Link key={t.id} to={`/tasks/${t.id}`} onClick={close} className="flex items-start gap-2.5 rounded-lg px-2 py-2 hover:bg-surface-2">
+            <Avatar name={t._ref?.author_id?.title} color={t._ref?.author_id?.color} size={22} className="mt-0.5" />
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-[13px] font-semibold">{t.title}</span>
+              <span className="flex justify-between gap-2 text-[11px]"><span className="truncate text-faint">{relative(t.created_at)}</span>
+                <span className={cx('shrink-0', dl.tone === 'danger' ? 'text-danger' : 'text-muted')}>{dl.text.replace('Просрочено: ', '')}</span></span>
+            </span>
+          </Link>
+        );
+      })}
+      {!items.length && <p className="px-2 py-2 text-xs text-faint">На сегодня задач нет</p>}
+    </div>
   );
 }
 
-function Sidebar({ collapsed, setCollapsed, mobileOpen, closeMobile }: { collapsed: boolean; setCollapsed: (v: boolean) => void; mobileOpen: boolean; closeMobile: () => void }) {
+function MyProjects({ close }: { close: () => void }) {
+  const { user } = useAuth();
+  const { data } = useList('projects', { manager_id: user!.id, status__in: 'planning,active,paused', limit: 8, is_archived__ne: 1 });
+  const ids = (data?.items ?? []).map((p: any) => p.id).join(',');
+  const stages = useApi<Record<string, any>>(['stats', 'stages', ids], '/api/projects/stages', { ids }, { enabled: !!ids }).data ?? {};
+  return (
+    <div className="border-t border-line px-3 pb-2 pt-3">
+      <p className="mb-1.5 px-2 text-xs font-semibold text-faint">Проекты, где я руководитель</p>
+      {(data?.items ?? []).map((p: any) => (
+        <Link key={p.id} to={`/projects/${p.id}`} onClick={close} className="flex items-start gap-2.5 rounded-lg px-2 py-2 hover:bg-surface-2">
+          <span className="mt-1 size-2.5 shrink-0 rounded-full" style={{ background: p.color }} />
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-[13px] font-semibold">{p.name}</span>
+            <span className="flex justify-between gap-2 text-[11px] text-faint"><span>{p.end_date ? new Date(p.end_date + 'T12:00').toLocaleDateString('ru-RU') : ''}</span><span className="truncate">{stages[p.id]?.current ?? ''}</span></span>
+          </span>
+        </Link>
+      ))}
+      {!data?.items.length && <p className="px-2 py-2 text-xs text-faint">Нет активных проектов</p>}
+    </div>
+  );
+}
+
+function TeamList({ close }: { close: () => void }) {
+  const { data } = useList('users', { is_active: 1, limit: 12, sort: 'name', dir: 'asc' });
+  const nav = useNavigate();
+  return (
+    <div className="border-t border-line px-3 pb-2 pt-3">
+      {(data?.items ?? []).map((u: any) => (
+        <Link key={u.id} to={`/team/${u.id}`} onClick={close} className="flex items-center gap-2.5 rounded-lg px-2 py-1.5 hover:bg-surface-2">
+          <Avatar name={u.name} color={u.color} size={30} />
+          <span className="min-w-0"><span className="block truncate text-[13px] font-semibold">{u.name}</span><span className="block truncate text-[11px] text-faint">{u.position}</span></span>
+        </Link>
+      ))}
+      <Button size="sm" full className="mt-2" icon={<Plus className="size-4" />} onClick={() => { nav('/team?invite=1'); close(); }}>Пригласить</Button>
+    </div>
+  );
+}
+
+function KbBases({ close }: { close: () => void }) {
+  const { data } = useList('kb_bases', { limit: 50, sort: 'sort', dir: 'asc' });
+  const nav = useNavigate();
+  return (
+    <div className="px-3 pb-2 pt-1">
+      <p className="mb-1.5 px-2 text-xs font-semibold text-faint">Базы знаний</p>
+      {(data?.items ?? []).map((b: any) => (
+        <Link key={b.id} to={`/kb?base=${b.id}`} onClick={close} className="flex items-center gap-2.5 rounded-lg px-2 py-2 text-[13px] font-semibold hover:bg-surface-2">
+          <span>{b.icon || '📘'}</span><span className="truncate">{b.name}</span>
+        </Link>
+      ))}
+      <Button size="sm" full className="mt-2" onClick={() => { nav('/kb'); close(); }}>Все базы знаний</Button>
+    </div>
+  );
+}
+
+function MenuPanel({ menu, close, onCreate }: { menu: ModuleMenu; close: () => void; onCreate: (entity: string) => void }) {
+  const counts = MenuCounts();
+  const loc = useLocation();
   const { can } = useAuth();
-  const nav = NAV.filter((n) => can(n.module));
-  const more = MORE.filter((n) => can(n.module));
-  const body = (isMobile: boolean) => {
-    const c = isMobile ? false : collapsed;
+  const here = loc.pathname + loc.search;
+  const link = (l: { to: string; label: string; icon?: ReactNode; create?: string; count?: string }) => {
+    const active = here === l.to || (loc.pathname === l.to.split('?')[0] && !l.to.includes('?') && !loc.search);
     return (
-      <div className="flex h-full flex-col bg-side text-side-fg">
-        <div className={cx('flex h-14 shrink-0 items-center gap-2.5 px-4', c && 'justify-center px-0')}>
-          <Logo size={28} />
-          {!c && <span className="text-lg font-extrabold tracking-tight">Vela<span className="text-brand-400">.</span></span>}
-          {isMobile && <IconButton label="Закрыть меню" className="ml-auto text-side-muted hover:bg-white/10" onClick={closeMobile}><X className="size-5" /></IconButton>}
-        </div>
-        <nav className="flex-1 space-y-0.5 overflow-y-auto px-3 pb-3">
-          {nav.map((n) => <SideLink key={n.to} item={n} collapsed={c} onClick={isMobile ? closeMobile : undefined} />)}
-          {more.length > 0 && <div className={cx('px-2.5 pb-1 pt-4 text-[11px] font-bold uppercase tracking-wider text-side-muted/70', c && 'text-center px-0')}>{c ? '•••' : 'Ещё'}</div>}
-          {more.map((n) => <SideLink key={n.to} item={n} collapsed={c} onClick={isMobile ? closeMobile : undefined} />)}
-        </nav>
-        <div className="space-y-0.5 border-t border-white/5 p-3">
-          {can('settings') && <SideLink item={{ to: '/settings', label: 'Настройки', icon: <Settings />, module: 'settings' }} collapsed={c} onClick={isMobile ? closeMobile : undefined} />}
-          {!isMobile && (
-            <button type="button" onClick={() => setCollapsed(!collapsed)} className={cx('flex h-9 w-full items-center gap-3 rounded-lg px-2.5 text-[13px] font-semibold text-side-muted hover:bg-white/5 hover:text-side-fg', c && 'justify-center px-0')}>
-              {collapsed ? <ChevronsRight className="size-[18px]" /> : <><ChevronsLeft className="size-[18px]" /><span>Свернуть</span></>}
-            </button>
-          )}
-        </div>
+      <div key={l.to + l.label} className="group flex items-center">
+        <Link to={l.to} onClick={close}
+          className={cx('flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13.5px] font-medium [&>svg]:size-[17px] [&>svg]:shrink-0 [&>svg]:text-faint',
+            active ? 'bg-primary-soft text-primary [&>svg]:text-primary' : 'hover:bg-surface-2')}>
+          {l.icon}<span className="flex-1 truncate">{l.label}</span>
+          {l.count && counts[l.count] > 0 && <span className="text-xs font-semibold text-faint tabular">{counts[l.count]}</span>}
+        </Link>
+        {l.create && can(menu.module, 'write') && (
+          <button type="button" aria-label={`Создать: ${l.label}`} onClick={() => { onCreate(l.create!); close(); }} className="ml-1 rounded-md p-1.5 text-faint hover:bg-surface-2 hover:text-primary"><Plus className="size-4" /></button>
+        )}
       </div>
     );
   };
   return (
-    <>
-      <aside className={cx('hidden shrink-0 transition-[width] duration-200 lg:block', collapsed ? 'w-[68px]' : 'w-[232px]')}>
-        <div className={cx('fixed inset-y-0 left-0 z-30 transition-[width] duration-200', collapsed ? 'w-[68px]' : 'w-[232px]')}>{body(false)}</div>
-      </aside>
-      {mobileOpen && (
-        <div className="fixed inset-0 z-50 lg:hidden" onClick={closeMobile}>
-          <div className="absolute inset-0 bg-ink-950/50 anim-fade" />
-          <div className="relative h-full w-[260px] anim-slide" onClick={(e) => e.stopPropagation()}>{body(true)}</div>
+    <div className="flex h-full flex-col">
+      <div className="flex items-center justify-between px-5 pb-2 pt-4">
+        <h2 className="text-lg font-extrabold tracking-tight">{menu.title}</h2>
+        {menu.create && can(menu.module, 'write') && <IconButton label="Создать" onClick={() => { onCreate(menu.create!); close(); }}><Plus className="size-5" /></IconButton>}
+      </div>
+      <div className="flex-1 overflow-y-auto">
+        {menu.sections.map((s, k) => (
+          <div key={k} className={cx('px-3 py-1.5', k > 0 && 'border-t border-line pt-2.5')}>
+            {s.title && <p className="mb-1 px-2.5 text-xs font-semibold text-faint">{s.title}</p>}
+            {s.links.map(link)}
+          </div>
+        ))}
+        {menu.dynamic === 'tasks_today' && <TodayTasks close={close} />}
+        {menu.dynamic === 'my_projects' && <MyProjects close={close} />}
+        {menu.dynamic === 'team' && <TeamList close={close} />}
+        {menu.dynamic === 'kb_bases' && <KbBases close={close} />}
+      </div>
+      <div className="border-t border-line px-3 py-2">
+        {menu.footer.map((l) => (
+          <Link key={l.to + l.label} to={l.to} onClick={close} className="flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13px] font-medium text-muted hover:bg-surface-2 hover:text-fg [&>svg]:size-4">
+            {l.icon}<span className="flex-1">{l.label}</span><ChevronRight className="size-4 text-faint" />
+          </Link>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function MorePanel({ close }: { close: () => void }) {
+  const { enabled } = useModules();
+  const nav = useNavigate();
+  const mobile = useIsMobile();
+  const tiles = EXTRA.filter((m) => enabled(m.module));
+  const coreOnMobile = mobile ? MENUS.filter((m) => ['finance', 'team', 'kb'].includes(m.key) && enabled(m.module)) : [];
+  return (
+    <div className="flex h-full flex-col">
+      <h2 className="px-5 pb-3 pt-4 text-lg font-extrabold tracking-tight">Ещё</h2>
+      <div className="flex-1 overflow-y-auto px-4 pb-4">
+        {coreOnMobile.length > 0 && (
+          <div className="mb-3 grid grid-cols-3 gap-2">
+            {coreOnMobile.map((m) => (
+              <button key={m.key} type="button" onClick={() => { close(); window.dispatchEvent(new CustomEvent('vela:open-menu', { detail: m.key })); }}
+                className="flex flex-col items-center gap-2 rounded-2xl border border-line bg-surface p-3 text-center text-xs font-semibold hover:border-primary">
+                <span className="flex size-10 items-center justify-center rounded-xl bg-primary-soft text-primary [&>svg]:size-5">{RAIL_ICONS[m.key]}</span>{m.title}
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="grid grid-cols-3 gap-2 md:grid-cols-2">
+          {tiles.map((m) => (
+            <Link key={m.key} to={m.to} onClick={close} className="flex flex-col items-center gap-2 rounded-2xl border border-line bg-surface px-2 py-3.5 text-center text-xs font-semibold leading-tight transition hover:border-primary hover:shadow-sm">
+              <span className="flex size-10 items-center justify-center rounded-xl text-white shadow-sm [&>svg]:size-5" style={{ background: `linear-gradient(135deg, ${m.color}, ${m.color}cc)` }}>{m.icon}</span>
+              {m.label}
+            </Link>
+          ))}
         </div>
+      </div>
+      <div className="border-t border-line p-3"><Button full onClick={() => { nav('/settings/modules'); close(); }}>Список модулей</Button></div>
+    </div>
+  );
+}
+
+// ---------------- rail ----------------
+function Rail({ open, setOpen }: { open: string | null; setOpen: (k: string | null) => void }) {
+  const loc = useLocation();
+  const nav = useNavigate();
+  const { enabled } = useModules();
+  const { can } = useAuth();
+  const active = (key: string) => MODULE_PATHS[key]?.some((p) => (p === '/' ? loc.pathname === '/' : loc.pathname.startsWith(p)));
+  return (
+    <aside className="fixed bottom-0 left-0 top-14 z-30 hidden w-[72px] flex-col items-center border-r border-line bg-surface py-2 md:flex">
+      <nav className="flex w-full flex-1 flex-col items-center gap-0.5 overflow-y-auto">
+        {RAIL.filter((r) => r.key === 'start' || r.key === 'more' || enabled(r.module)).map((r) => {
+          const on = open === r.key || (!open && active(r.key));
+          return (
+            <button key={r.key} type="button" onClick={() => { if (r.key === 'start') { setOpen(null); nav('/'); } else setOpen(open === r.key ? null : r.key); }}
+              className={cx('group flex w-[64px] flex-col items-center gap-1 rounded-xl px-1 py-1.5 text-[10.5px] font-semibold leading-tight transition-colors', on ? 'text-primary' : 'text-muted hover:text-fg')}>
+              <span className={cx('flex size-9 items-center justify-center rounded-xl transition-colors [&>svg]:size-[19px]', on ? 'bg-primary text-primary-fg shadow-sm' : 'bg-surface-2 group-hover:bg-line')}>{RAIL_ICONS[r.icon]}</span>
+              <span className="w-full truncate text-center">{r.label}</span>
+            </button>
+          );
+        })}
+      </nav>
+      {can('settings') && (
+        <Link to="/settings" onClick={() => setOpen(null)} title="Настройки" className={cx('flex size-9 items-center justify-center rounded-xl', loc.pathname.startsWith('/settings') ? 'bg-primary text-primary-fg' : 'text-muted hover:bg-surface-2')}>
+          <Settings className="size-[19px]" />
+        </Link>
       )}
+    </aside>
+  );
+}
+
+function Flyout({ open, setOpen, onCreate }: { open: string | null; setOpen: (k: string | null) => void; onCreate: (e: string) => void }) {
+  const mobile = useIsMobile();
+  const loc = useLocation();
+  useEffect(() => { setOpen(null); }, [loc.pathname, loc.search]);
+  useEffect(() => {
+    if (!open) return;
+    const h = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(null); };
+    window.addEventListener('keydown', h);
+    return () => window.removeEventListener('keydown', h);
+  }, [open, setOpen]);
+  if (!open) return null;
+  const menu = MENUS.find((m) => m.key === open);
+  const close = () => setOpen(null);
+  const body = open === 'more' ? <MorePanel close={close} /> : menu ? <MenuPanel menu={menu} close={close} onCreate={onCreate} /> : null;
+  if (mobile) {
+    return (
+      <div className="fixed inset-0 z-40 md:hidden" onClick={close}>
+        <div className="absolute inset-0 bg-ink-950/40 anim-fade" />
+        <div className="absolute inset-x-0 bottom-0 top-10 overflow-hidden rounded-t-3xl bg-surface shadow-2xl anim-in" onClick={(e) => e.stopPropagation()}>
+          <div className="mx-auto mt-2 h-1 w-10 rounded-full bg-line-strong" />
+          <IconButton label="Закрыть" className="absolute right-3 top-3" onClick={close}><X className="size-5" /></IconButton>
+          {body}
+        </div>
+      </div>
+    );
+  }
+  return (
+    <>
+      <div className="fixed inset-0 top-14 z-20 hidden bg-ink-950/10 md:block anim-fade" onClick={close} />
+      <div className="fixed bottom-0 left-[72px] top-14 z-30 hidden w-[288px] border-r border-line bg-surface shadow-[8px_0_32px_-12px_rgba(15,27,45,.25)] md:block anim-slide-l">{body}</div>
     </>
   );
 }
 
-// ---------------- command palette / search ----------------
+function BottomBar({ open, setOpen }: { open: string | null; setOpen: (k: string | null) => void }) {
+  const loc = useLocation();
+  const nav = useNavigate();
+  const { enabled } = useModules();
+  const items = [RAIL[0], ...RAIL.filter((r) => ['tasks', 'crm', 'projects'].includes(r.key) && enabled(r.module)), RAIL[RAIL.length - 1]];
+  const active = (key: string) => MODULE_PATHS[key]?.some((p) => (p === '/' ? loc.pathname === '/' : loc.pathname.startsWith(p)));
+  return (
+    <nav className="fixed inset-x-0 bottom-0 z-30 flex border-t border-line bg-surface/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden">
+      {items.map((r) => {
+        const on = open === r.key || (!open && active(r.key));
+        return (
+          <button key={r.key} type="button" onClick={() => { if (r.key === 'start') { setOpen(null); nav('/'); } else setOpen(open === r.key ? null : r.key); }}
+            className={cx('flex flex-1 flex-col items-center gap-0.5 py-2 text-[10px] font-semibold', on ? 'text-primary' : 'text-muted')}>
+            <span className={cx('flex h-7 w-12 items-center justify-center rounded-full [&>svg]:size-5', on && 'bg-primary-soft')}>{RAIL_ICONS[r.icon]}</span>{r.label}
+          </button>
+        );
+      })}
+    </nav>
+  );
+}
+
+// ---------------- search, notifications, timer ----------------
 function SearchPalette({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [q, setQ] = useState('');
   const [debounced, setDebounced] = useState('');
@@ -103,9 +304,7 @@ function SearchPalette({ open, onClose }: { open: boolean; onClose: () => void }
   useEffect(() => { if (!open) setQ(''); }, [open]);
   const { data, isFetching } = useApi<any[]>(['search'], '/api/search', { q: debounced }, { enabled: open && debounced.length >= 2 });
   const go = (link: string) => { nav(link); onClose(); };
-  const quick = [
-    ['Сделки', '/crm/deals'], ['Задачи', '/tasks'], ['Компании', '/crm/companies'], ['Счета', '/crm/invoices'], ['Финансы', '/finance'], ['Интеграция с 1С', '/settings/onec'],
-  ];
+  const quick = [['Сделки', '/crm/deals'], ['Задачи', '/tasks'], ['Компании', '/crm/companies'], ['Счета', '/crm/invoices'], ['Деньги', '/finance/money'], ['Интеграция с 1С', '/settings/onec']];
   return (
     <Modal open={open} onClose={onClose} title="Поиск по CRM" size="md">
       <Input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Компания, ИНН, сделка, задача, счёт, телефон…" icon={<Search className="size-4" />} />
@@ -133,7 +332,6 @@ function SearchPalette({ open, onClose }: { open: boolean; onClose: () => void }
   );
 }
 
-// ---------------- notifications ----------------
 function Notifications() {
   const nav = useNavigate();
   const inv = useInvalidate();
@@ -143,7 +341,7 @@ function Notifications() {
     <Popover align="right" className="w-[min(380px,calc(100vw-1.5rem))] p-0" trigger={({ toggle }) => (
       <IconButton label="Уведомления" onClick={toggle} className="relative">
         <Bell className="size-5" />
-        {!!data?.unread && <span className="absolute right-1.5 top-1.5 flex min-w-4 items-center justify-center rounded-full bg-accent px-1 text-[10px] font-bold text-white">{data.unread > 9 ? '9+' : data.unread}</span>}
+        {!!data?.unread && <span className="absolute right-1 top-1 flex min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-primary-fg">{data.unread > 9 ? '9+' : data.unread}</span>}
       </IconButton>
     )}>
       {(close) => (
@@ -157,10 +355,7 @@ function Notifications() {
               <button key={n.id} type="button" onClick={async () => { await api.post(`/api/notifications/${n.id}/read`); inv('notifications'); if (n.link) nav(n.link); close(); }}
                 className="flex w-full gap-2.5 rounded-lg px-2.5 py-2 text-left hover:bg-surface-2">
                 <span className={cx('mt-1.5 size-2 shrink-0 rounded-full', n.is_read ? 'bg-transparent' : 'bg-accent')} />
-                <span className="min-w-0">
-                  <span className={cx('block text-sm', !n.is_read && 'font-semibold')}>{n.text}</span>
-                  <span className="text-xs text-faint">{relative(n.created_at)}</span>
-                </span>
+                <span className="min-w-0"><span className={cx('block text-sm', !n.is_read && 'font-semibold')}>{n.text}</span><span className="text-xs text-faint">{relative(n.created_at)}</span></span>
               </button>
             ))}
             {!data?.items?.length && <p className="px-3 py-8 text-center text-sm text-muted">Новых уведомлений нет</p>}
@@ -180,16 +375,14 @@ function TimerPill() {
   const mins = Math.max(0, Math.round((Date.now() - new Date(data.started_at).getTime()) / 60000)) + Number(data.minutes ?? 0);
   return (
     <button type="button" onClick={async () => { await api.post('/api/time/stop'); inv('time_entries', 'tasks'); }} title="Остановить таймер"
-      className="hidden items-center gap-2 rounded-lg bg-accent-soft px-2.5 py-1.5 text-xs font-bold text-accent hover:brightness-95 sm:inline-flex">
+      className="hidden items-center gap-2 rounded-lg bg-accent-soft px-2.5 py-1.5 text-xs font-bold text-accent hover:brightness-95 lg:inline-flex">
       <span className="relative flex size-2"><span className="absolute inline-flex size-full animate-ping rounded-full bg-accent opacity-60" /><span className="relative inline-flex size-2 rounded-full bg-accent" /></span>
-      <span className="max-w-40 truncate">{data.task_title || data.comment || 'Таймер'}</span>
-      <span className="tabular">{minutes(mins)}</span>
-      <Square className="size-3 fill-current" />
+      <span className="max-w-40 truncate">{data.task_title || data.comment || 'Таймер'}</span><span className="tabular">{minutes(mins)}</span><Square className="size-3 fill-current" />
     </button>
   );
 }
 
-function useTheme() {
+export function useTheme() {
   const [dark, setDark] = useState(() => document.documentElement.classList.contains('dark'));
   const toggle = () => {
     const next = !dark;
@@ -218,120 +411,141 @@ function PasswordDialog({ open, onClose }: { open: boolean; onClose: () => void 
   );
 }
 
-function Topbar({ openMobile }: { openMobile: () => void }) {
+const CREATE_TARGET: Record<string, string> = { deals: '/crm/deals/', tasks: '/tasks/', companies: '/crm/companies/', contacts: '/crm/contacts/', projects: '/projects/', invoices: '/crm/invoices/', offers: '/finance/offers/' };
+
+function TopBar({ onCreate, openMenu }: { onCreate: (e: string) => void; openMenu: (k: string) => void }) {
   const { user, logout, can } = useAuth();
   const nav = useNavigate();
+  const toast = useToast();
   const { dark, toggle } = useTheme();
   const [search, setSearch] = useState(false);
-  const [create, setCreate] = useState<{ entity: string; initial?: any } | null>(null);
   const [pw, setPw] = useState(false);
+  const unreadMail = useList('mails', { folder: 'inbox', is_read: 0, limit: 1, expand: 0 }, { enabled: can('mail') }).data?.total ?? 0;
   useEffect(() => {
     const h = (e: KeyboardEvent) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setSearch(true); } };
     window.addEventListener('keydown', h);
     return () => window.removeEventListener('keydown', h);
   }, []);
   const creators = [
-    { entity: 'deals', label: 'Сделку', module: 'crm' }, { entity: 'tasks', label: 'Задачу', module: 'tasks' }, { entity: 'companies', label: 'Компанию', module: 'crm' },
-    { entity: 'contacts', label: 'Контакт', module: 'crm' }, { entity: 'events', label: 'Событие', module: 'calendar' }, { entity: 'projects', label: 'Проект', module: 'projects' },
-    { entity: 'fin_operations', label: 'Операцию', module: 'finance' },
+    { entity: 'tasks', label: 'Задачу', module: 'tasks' }, { entity: 'deals', label: 'Сделку', module: 'crm' }, { entity: 'companies', label: 'Компанию', module: 'crm' },
+    { entity: 'contacts', label: 'Контакт', module: 'crm' }, { entity: 'crm_activities', label: 'Дело', module: 'crm' }, { entity: 'projects', label: 'Проект', module: 'projects' },
+    { entity: 'invoices', label: 'Счёт', module: 'crm' }, { entity: 'events', label: 'Событие', module: 'calendar' }, { entity: 'fin_operations', label: 'Операцию', module: 'finance' },
   ].filter((c) => can(c.module, 'write'));
   const today = new Date();
+  const reset = async () => {
+    if (!(await toast.confirm({ title: 'Сбросить демо?', text: 'Все ваши изменения удалятся, данные вернутся к исходным.', ok: 'Сбросить', danger: true }))) return;
+    const { resetDemo } = await import('../engine.ts');
+    resetDemo();
+  };
+  void openMenu;
   return (
-    <header className="sticky top-0 z-20 flex h-14 items-center gap-2 border-b border-line bg-surface/90 px-3 backdrop-blur sm:px-5">
-      <IconButton label="Меню" className="lg:hidden" onClick={openMobile}><Menu className="size-5" /></IconButton>
-      <button type="button" onClick={() => setSearch(true)} className="flex h-9 w-full max-w-md items-center gap-2 rounded-lg border border-line bg-surface-2 px-3 text-sm text-faint hover:border-line-strong">
-        <Search className="size-4" /><span className="flex-1 truncate text-left">Поиск по CRM…</span><span className="hidden sm:inline"><Kbd>Ctrl K</Kbd></span>
+    <header className="fixed inset-x-0 top-0 z-40 flex h-14 items-center gap-1 border-b border-line bg-surface px-3 md:px-4">
+      <Link to="/" className="mr-2 flex items-center gap-2 md:w-[150px]">
+        <Logo size={28} /><span className="text-lg font-extrabold tracking-tight">Vela<span className="text-primary">.</span></span>
+      </Link>
+      {creators.length > 0 && (
+        <Popover trigger={({ toggle: t }) => <IconButton label="Создать" onClick={t}><Plus className="size-5" /></IconButton>}>
+          {(close) => <div className="w-52">{creators.map((c) => <MenuItem key={c.entity} onClick={() => { onCreate(c.entity); close(); }}>{c.label}</MenuItem>)}</div>}
+        </Popover>
+      )}
+      <IconButton label="Поиск (Ctrl+K)" onClick={() => setSearch(true)}><Search className="size-5" /></IconButton>
+      <button type="button" onClick={() => setSearch(true)} className="ml-1 hidden h-9 w-64 items-center gap-2 rounded-lg bg-surface-2 px-3 text-sm text-faint hover:bg-line xl:flex">
+        <span className="flex-1 text-left">Найти в CRM…</span><Kbd>Ctrl K</Kbd>
       </button>
-      <div className="ml-auto flex items-center gap-1">
+      <div className="ml-auto flex items-center gap-0.5">
+        {IS_DEMO && <button type="button" onClick={reset} className="mr-2 hidden items-center gap-1.5 rounded-lg bg-accent-soft px-3 py-1.5 text-xs font-semibold text-accent hover:brightness-95 lg:inline-flex"><RotateCcw className="size-3.5" />Сбросить демо</button>}
         <TimerPill />
-        <div className="mr-1 hidden items-center gap-2 border-r border-line pr-3 xl:flex">
-          <span className="text-2xl font-light leading-none tabular">{today.getDate()}</span>
-          <span className="text-[11px] leading-tight text-muted">{today.toLocaleDateString('ru-RU', { weekday: 'long' })}<br />{today.toLocaleDateString('ru-RU', { month: 'long' })}</span>
-        </div>
-        {creators.length > 0 && (
-          <Popover align="right" trigger={({ toggle: t }) => <Button variant="primary" size="sm" icon={<Plus className="size-4" />} onClick={t} className="mr-1"><span className="hidden sm:inline">Создать</span></Button>}>
-            {(close) => creators.map((c) => <MenuItem key={c.entity} onClick={() => { setCreate({ entity: c.entity }); close(); }}>{c.label}</MenuItem>)}
-          </Popover>
+        <Link to="/calendar" className="mr-2 hidden items-center gap-2.5 rounded-lg px-2 py-1 hover:bg-surface-2 lg:flex" title="Календарь">
+          <span className="text-right leading-none"><span className="block text-[10px] text-faint">{today.toLocaleDateString('ru-RU', { weekday: 'short' })}</span><span className="text-2xl font-light tabular">{today.getDate()}</span></span>
+          <span className="h-8 w-0.5 rounded-full bg-primary" />
+          <span className="leading-tight"><span className="block text-[13px] font-semibold">Календарь</span><span onClick={(e) => { e.preventDefault(); onCreate('events'); }} className="text-xs text-primary hover:underline">Создать событие</span></span>
+        </Link>
+        {can('mail') && (
+          <IconButton label="Почта" className="relative max-sm:!hidden" onClick={() => nav('/mail')}>
+            <Mail className="size-5" />{unreadMail > 0 && <span className="absolute right-1 top-1 size-2 rounded-full bg-accent" />}
+          </IconButton>
         )}
         <Notifications />
-        <IconButton label={dark ? 'Светлая тема' : 'Тёмная тема'} onClick={toggle}>{dark ? <Sun className="size-5" /> : <Moon className="size-5" />}</IconButton>
+        {can('messenger') && <IconButton label="Мессенджер" className="max-sm:!hidden" onClick={() => nav('/messenger')}><MessageCircle className="size-5" /></IconButton>}
+        <IconButton label="Справка" className="max-sm:!hidden" onClick={() => nav('/kb')}><CircleHelp className="size-5" /></IconButton>
+        <IconButton label={dark ? 'Светлая тема' : 'Тёмная тема'} onClick={toggle} className="max-sm:!hidden">{dark ? <Sun className="size-5" /> : <Moon className="size-5" />}</IconButton>
         <Popover align="right" trigger={({ toggle: t }) => (
-          <button type="button" onClick={t} className="ml-1 flex items-center gap-2 rounded-lg p-1 hover:bg-surface-2" aria-label="Профиль">
-            <Avatar name={user?.name} color={user?.color} size={30} />
-          </button>
+          <button type="button" onClick={t} className="ml-1 rounded-xl p-0.5 hover:ring-2 hover:ring-primary/30" aria-label="Профиль"><Avatar name={user?.name} color={user?.color} size={34} className="rounded-xl" /></button>
         )}>
           {(close) => (
-            <div className="w-60">
-              <div className="border-b border-line px-3 py-2.5">
-                <p className="truncate font-bold">{user?.name}</p>
-                <p className="truncate text-xs text-muted">{user?.email}</p>
-              </div>
+            <div className="w-64">
+              <div className="border-b border-line px-3 py-2.5"><p className="truncate font-bold">{user?.name}</p><p className="truncate text-xs text-muted">{user?.email}</p></div>
               <div className="p-1">
                 <MenuItem icon={<UserCircle2 className="size-4" />} onClick={() => { nav(`/team/${user?.id}`); close(); }}>Мой профиль</MenuItem>
                 <MenuItem icon={<KeyRound className="size-4" />} onClick={() => { setPw(true); close(); }}>Сменить пароль</MenuItem>
-                <MenuItem icon={<LogOut className="size-4" />} danger onClick={() => { logout(); close(); }}>Выйти</MenuItem>
+                <MenuItem icon={dark ? <Sun className="size-4" /> : <Moon className="size-4" />} onClick={() => { toggle(); close(); }}>{dark ? 'Светлая тема' : 'Тёмная тема'}</MenuItem>
+                {IS_DEMO && <MenuItem icon={<RotateCcw className="size-4" />} onClick={() => { close(); reset(); }}>Сбросить демо</MenuItem>}
+                <MenuItem icon={<LogOut className="size-4" />} danger onClick={() => { logout(); close(); }}>{IS_DEMO ? 'Войти другим сотрудником' : 'Выйти'}</MenuItem>
               </div>
             </div>
           )}
         </Popover>
       </div>
       <SearchPalette open={search} onClose={() => setSearch(false)} />
-      {create && <RecordForm entity={create.entity} open onClose={() => setCreate(null)} initial={create.initial ?? null}
-        onSaved={(r) => { const map: Record<string, string> = { deals: '/crm/deals/', tasks: '/tasks/', companies: '/crm/companies/', contacts: '/crm/contacts/', projects: '/projects/' }; if (map[create.entity]) nav(map[create.entity] + r.id); }} />}
       <PasswordDialog open={pw} onClose={() => setPw(false)} />
     </header>
   );
 }
 
-function DemoBar() {
-  const toast = useToast();
-  const { logout } = useAuth();
-  if (!IS_DEMO) return null;
-  const reset = async () => {
-    if (!(await toast.confirm({ title: 'Сбросить демо?', text: 'Все изменения, которые вы сделали, удалятся, и данные вернутся к исходным.', ok: 'Сбросить', danger: true }))) return;
-    const { resetDemo } = await import('../engine.ts');
-    resetDemo();
-  };
-  return (
-    <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 bg-ink-900 px-4 py-1.5 text-center text-xs text-side-muted">
-      <span><b className="text-brand-300">Демо-версия.</b> Всё работает прямо в вашем браузере, данные видите только вы.</span>
-      <button type="button" className="font-semibold text-white hover:underline" onClick={() => logout()}>Войти другим сотрудником</button>
-      <button type="button" className="inline-flex items-center gap-1 font-semibold text-white hover:underline" onClick={reset}><RotateCcw className="size-3" />Сбросить данные</button>
-    </div>
-  );
-}
-
 export function Layout() {
-  const [collapsed, setCollapsed] = useState(() => { try { return localStorage.getItem('vela-sidebar') === '1'; } catch { return false; } });
-  const [mobile, setMobile] = useState(false);
+  const [open, setOpen] = useState<string | null>(null);
+  const [create, setCreate] = useState<string | null>(null);
   const loc = useLocation();
-  useEffect(() => { try { localStorage.setItem('vela-sidebar', collapsed ? '1' : '0'); } catch { /* ignore */ } }, [collapsed]);
+  const nav = useNavigate();
+  const { user } = useAuth();
   useEffect(() => { window.scrollTo(0, 0); }, [loc.pathname]);
+  useEffect(() => {
+    const h = (e: Event) => setOpen((e as CustomEvent).detail);
+    window.addEventListener('vela:open-menu', h);
+    return () => window.removeEventListener('vela:open-menu', h);
+  }, []);
+  const initial = useMemo(() => {
+    if (!create) return null;
+    if (create === 'tasks') return { assignee_id: user?.id, status: 'new' };
+    if (create === 'crm_activities') return { responsible_id: user?.id, kind: 'call' };
+    if (create === 'events') { const d = new Date(); d.setMinutes(0); d.setHours(d.getHours() + 1); const p = (n: number) => String(n).padStart(2, '0');
+      const s = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:00`; return { start: s, owner_id: user?.id, attendees: [user?.id], kind: 'meeting' }; }
+    return null;
+  }, [create, user]);
   return (
-    <div className="flex min-h-full flex-col">
-      <div className="flex flex-1">
-        <Sidebar collapsed={collapsed} setCollapsed={setCollapsed} mobileOpen={mobile} closeMobile={() => setMobile(false)} />
-        <div className="flex min-w-0 flex-1 flex-col">
-          <DemoBar />
-          <Topbar openMobile={() => setMobile(true)} />
-          <main className="mx-auto w-full max-w-[1600px] flex-1 px-4 py-5 sm:px-6 lg:py-6">
-            <ErrorBoundary resetKey={loc.pathname}><Outlet /></ErrorBoundary>
-          </main>
+    <div className="min-h-full">
+      <TopBar onCreate={setCreate} openMenu={setOpen} />
+      <Rail open={open} setOpen={setOpen} />
+      <Flyout open={open} setOpen={setOpen} onCreate={setCreate} />
+      <main className="min-h-screen px-4 pb-24 pt-[4.75rem] sm:px-6 md:ml-[72px] md:pb-8 lg:pt-[5rem]">
+        <div className="mx-auto w-full max-w-[1600px]">
+          <ErrorBoundary resetKey={loc.pathname}><Outlet /></ErrorBoundary>
         </div>
-      </div>
+      </main>
+      <BottomBar open={open} setOpen={setOpen} />
+      {create && <RecordForm entity={create} open onClose={() => setCreate(null)} initial={initial}
+        onSaved={(r) => { if (CREATE_TARGET[create]) nav(CREATE_TARGET[create] + r.id); }} />}
     </div>
   );
 }
 
-export function ModuleTabs({ tabs }: { tabs: { to: string; label: string; end?: boolean; hidden?: boolean }[] }) {
+/** Page sub-navigation rendered inside PageHeader */
+export function ModuleTabs({ tabs }: { tabs: { to: string; label: string; end?: boolean; hidden?: boolean; default?: boolean }[] }) {
+  const loc = useLocation();
   return (
-    <nav className="-mt-1 mb-5 flex gap-1 overflow-x-auto border-b border-line">
-      {tabs.filter((t) => !t.hidden).map((t) => (
-        <NavLink key={t.to} to={t.to} end={t.end}
-          className={({ isActive }) => cx('-mb-px shrink-0 whitespace-nowrap border-b-2 px-3 py-2.5 text-sm font-semibold transition-colors', isActive ? 'border-primary text-fg' : 'border-transparent text-muted hover:text-fg')}>
-          {t.label}
-        </NavLink>
-      ))}
+    <nav className="-mb-px flex gap-5 overflow-x-auto">
+      {tabs.filter((t) => !t.hidden).map((t) => {
+        const [path, query] = t.to.split('?');
+        const key = query?.split('=')[0];
+        const matchQuery = query ? loc.search.includes(query) || (!!t.default && !new URLSearchParams(loc.search).has(key!)) : true;
+        return (
+          <NavLink key={t.to} to={t.to} end={t.end ?? !!query}
+            className={({ isActive }) => cx('shrink-0 whitespace-nowrap border-b-2 pb-2.5 text-sm font-semibold transition-colors',
+              isActive && matchQuery && (query || !loc.search || path === loc.pathname) ? 'border-primary text-fg' : 'border-transparent text-muted hover:text-fg')}>
+            {t.label}
+          </NavLink>
+        );
+      })}
     </nav>
   );
 }

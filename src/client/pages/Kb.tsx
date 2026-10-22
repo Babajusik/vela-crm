@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Eye, FolderPlus, Pencil, Plus, Search, Trash2 } from 'lucide-react';
 import { api } from '../api.ts';
 import { relative } from '../lib/format.ts';
 import { useAuth, useInvalidate, useList, useRecord } from '../lib/state.tsx';
 import { Avatar, Button, Card, EmptyState, FormRow, IconButton, Input, Loading, PageHeader, Select, cx, useToast } from '../ui/ui.tsx';
 import { RecordForm, RichText, SafeHtml } from '../ui/fields.tsx';
+import { EntityList } from '../ui/data.tsx';
 
 export default function Kb() {
   const { id } = useParams();
@@ -13,23 +14,81 @@ export default function Kb() {
 }
 
 function Home() {
+  const [sp] = useSearchParams();
+  if (sp.get('manage') === '1') return <ManageBases />;
+  const base = Number(sp.get('base')) || null;
+  return base ? <BaseView base={base} /> : <AllBases />;
+}
+
+function AllBases() {
+  const { can } = useAuth();
+  const nav = useNavigate();
+  const [q, setQ] = useState('');
+  const [form, setForm] = useState(false);
+  const bases = useList('kb_bases', { limit: 100, sort: 'sort', dir: 'asc' }).data?.items ?? [];
+  const sections = useList('kb_sections', { limit: 500, expand: 0 }).data?.items ?? [];
+  const all = useList('kb_articles', { limit: 1000, expand: 0 }).data?.items ?? [];
+  const found = useList('kb_articles', { q, limit: 50 }, { enabled: q.trim().length >= 2 }).data?.items ?? [];
+  const countFor = (bid: number) => { const ids = sections.filter((s: any) => s.base_id === bid).map((s: any) => s.id); return all.filter((a: any) => ids.includes(a.section_id)).length; };
+  return (
+    <div>
+      <PageHeader title="Базы знаний" subtitle="Регламенты, курсы для новичков и ответы на частые вопросы"
+        actions={can('kb', 'write') && <><Button onClick={() => nav('/kb?manage=1')}>Настроить</Button><Button variant="primary" icon={<Plus className="size-4" />} onClick={() => setForm(true)}>База знаний</Button></>} />
+      <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Найти во всех базах знаний…" icon={<Search className="size-4" />} className="mb-5 max-w-xl" />
+      {q.trim().length >= 2 ? (
+        <Card padded={false}>
+          <ul className="divide-y divide-line">{found.map((a: any) => <li key={a.id}><Link to={`/kb/${a.id}`} className="block px-4 py-3 hover:bg-surface-2"><p className="font-semibold">{a.title}</p><p className="text-xs text-muted">{a._ref?.section_id?.title}</p></Link></li>)}
+            {!found.length && <li className="px-4 py-8 text-center text-sm text-faint">Ничего не найдено</li>}</ul>
+        </Card>
+      ) : (
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          {bases.map((b: any) => (
+            <Link key={b.id} to={`/kb?base=${b.id}`} className="rounded-2xl border border-line bg-surface p-5 transition hover:border-primary hover:shadow-md">
+              <span className="text-3xl">{b.icon || '📘'}</span>
+              <p className="mt-3 text-lg font-bold">{b.name}</p>
+              <p className="mt-1 line-clamp-2 text-sm text-muted">{b.description}</p>
+              <p className="mt-4 text-xs text-faint">{sections.filter((s: any) => s.base_id === b.id).length} разделов · {countFor(b.id)} статей</p>
+            </Link>
+          ))}
+          {!bases.length && <EmptyState title="Баз знаний нет" text="Создайте первую: например, «Регламенты» или «Курс для новичков»." />}
+        </div>
+      )}
+      <RecordForm entity="kb_bases" open={form} onClose={() => setForm(false)} initial={null} onSaved={(r) => nav(`/kb?base=${r.id}`)} size="md" />
+    </div>
+  );
+}
+
+function ManageBases() {
+  return (
+    <div>
+      <PageHeader title="Настройки баз знаний" subtitle="Порядок, названия и доступ" />
+      <EntityList entity="kb_bases" columns={['icon', 'name', 'description', 'access']} canExport={false} />
+      <div className="mt-5"><EntityList entity="kb_sections" columns={['name', 'base_id', 'parent_id', 'icon']} canExport={false} header={<p className="border-b border-line px-4 py-3 font-bold">Разделы</p>} /></div>
+    </div>
+  );
+}
+
+function BaseView({ base }: { base: number }) {
   const { can } = useAuth();
   const nav = useNavigate();
   const [q, setQ] = useState('');
   const [section, setSection] = useState<number | null>(null);
   const [secForm, setSecForm] = useState<any>(null);
-  const sections = useList('kb_sections', { limit: 200 }).data?.items ?? [];
-  const { data, isLoading } = useList('kb_articles', { q, section_id: section ?? undefined, limit: 200, is_published: can('kb', 'write') ? undefined : 1 });
+  const b = useRecord('kb_bases', base).data;
+  const sections = useList('kb_sections', { base_id: base, limit: 200 }).data?.items ?? [];
+  const secIds = sections.map((s: any) => s.id).join(',');
+  const { data, isLoading } = useList('kb_articles', { q, section_id: section ?? undefined, section_id__in: section ? undefined : secIds || '-1', limit: 200, is_published: can('kb', 'write') ? undefined : 1 });
   const articles = data?.items ?? [];
-  const all = useList('kb_articles', { limit: 1000, expand: 0 }).data?.items ?? [];
+  const all = useList('kb_articles', { section_id__in: secIds || '-1', limit: 1000, expand: 0 }).data?.items ?? [];
   return (
     <div>
-      <PageHeader title="База знаний" subtitle="Регламенты, инструкции и ответы на частые вопросы"
+      <Link to="/kb" className="mb-3 inline-flex items-center gap-1.5 text-sm font-semibold text-muted hover:text-fg"><ArrowLeft className="size-4" />Все базы знаний</Link>
+      <PageHeader title={`${b?.icon ?? ''} ${b?.name ?? 'База знаний'}`} subtitle={b?.description}
         actions={can('kb', 'write') && <>
-          <Button icon={<FolderPlus className="size-4" />} onClick={() => setSecForm({})}>Раздел</Button>
-          <Button variant="primary" icon={<Plus className="size-4" />} onClick={() => nav('/kb/new' + (section ? `?section=${section}` : ''))}>Статья</Button>
+          <Button icon={<FolderPlus className="size-4" />} onClick={() => setSecForm({ base_id: base })}>Раздел</Button>
+          <Button variant="primary" icon={<Plus className="size-4" />} onClick={() => nav('/kb/new' + (section ? `?section=${section}` : sections[0] ? `?section=${sections[0].id}` : ''))}>Статья</Button>
         </>} />
-      <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Найти в базе знаний…" icon={<Search className="size-4" />} className="mb-5 max-w-xl" />
+      <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Найти в этой базе…" icon={<Search className="size-4" />} className="mb-5 max-w-xl" />
       <div className="grid gap-5 lg:grid-cols-[260px_1fr]">
         <nav className="space-y-1">
           <button type="button" onClick={() => setSection(null)} className={cx('flex w-full items-center justify-between rounded-lg px-3 py-2 text-sm font-semibold', !section ? 'bg-primary-soft text-primary' : 'hover:bg-surface-2')}>
@@ -59,7 +118,7 @@ function Home() {
           )}
         </div>
       </div>
-      <RecordForm entity="kb_sections" open={!!secForm} onClose={() => setSecForm(null)} initial={secForm?.id ? secForm : null} fields={['name', 'icon', 'parent_id', 'description']} size="md" />
+      <RecordForm entity="kb_sections" open={!!secForm} onClose={() => setSecForm(null)} initial={secForm} fields={['name', 'icon', 'base_id', 'parent_id', 'description']} size="md" />
     </div>
   );
 }

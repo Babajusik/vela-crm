@@ -50,7 +50,8 @@ export async function bootstrap(db: DB, admin: { name: string; email: string; pa
       ['Переговоры', '#F59E0B', 'open', 70], ['Счёт выставлен', '#14B8A6', 'open', 85], ['Успешно', '#10B981', 'won', 100], ['Провал', '#EF4444', 'lost', 0]] as [string, string, string, number][])
       .forEach(([name, color, kind, probability], i) => ins('stages', { pipeline_id: pipe, name, color, kind, probability, sort: i + 1 }));
     ins('chats', { name: 'Общий чат', kind: 'group', members: [uid], last_message_at: now });
-    ins('kb_sections', { name: 'Общее', icon: '📘', sort: 1 });
+    const kbBase = ins('kb_bases', { name: 'База знаний компании', icon: '📚', access: 'all', sort: 1 });
+    ins('kb_sections', { name: 'Общее', icon: '📘', sort: 1, base_id: kbBase });
     ins('folders', { name: 'Общие файлы' });
   });
 }
@@ -636,6 +637,105 @@ export async function seed(db: DB): Promise<void> {
     olog('in', 'connection', 'ok', 'Проверка подключения: организаций 1', 1, 3);
     olog('in', 'Каталог (CommerceML)', 'ok', 'Товаров: новых 0, обновлено 16, групп 5', 16, 2);
     olog('out', 'Заказы (CommerceML)', 'ok', 'Передано в 1С заказов: 4', 4, 1);
+
+    // ---------- parity data: activities, stages, portfolios, templates, lists, directions, offers ----------
+    db.run(`UPDATE deals SET start_date = substr(created_at, 1, 10)`);
+    const actSubjects: [string, string][] = [['call', 'Позвонить и уточнить требования'], ['meeting', 'Провести демонстрацию'], ['task', 'Подготовить расчёт стоимости'],
+      ['email', 'Отправить КП и презентацию'], ['call', 'Узнать решение по договору'], ['letter', 'Отправить договор на подпись']];
+    for (const d of D.filter((x) => x.kind === 'open')) {
+      const n = R.int(0, 2);
+      for (let k = 0; k < n; k++) {
+        const [kind, subject] = R.pick(actSubjects);
+        const shift = R.pick([-3, -1, 0, 0, 1, 2, 5]);
+        const due = new Date(); due.setDate(due.getDate() + shift); due.setHours(R.int(10, 17), R.pick([0, 30]), 0, 0);
+        ins('crm_activities', { kind, subject, due_at: localDateTime(due), responsible_id: d.resp, deal_id: d.id, company_id: d.company, contact_id: d.contact, is_done: 0, created_at: ts(dayAgo(R.int(1, 10))) });
+      }
+    }
+    for (const d of D.filter((x) => x.kind !== 'open').slice(0, 25)) {
+      ins('crm_activities', { kind: 'call', subject: 'Первичный звонок', due_at: `${addDays(d.created, 1)}T11:00`, responsible_id: d.resp, deal_id: d.id, company_id: d.company, is_done: 1, done_at: ts(addDays(d.created, 1)), result: 'Договорились о встрече' });
+    }
+    for (const d of D.filter((x) => x.kind === 'lost').slice(0, 4)) db.run(`UPDATE deals SET is_archived = 1 WHERE id = ?`, [d.id]);
+
+    const pf1 = ins('portfolios', { name: 'Внедрения для клиентов', description: 'Коммерческие проекты внедрения CRM', manager_id: uNikitin, color: '#0FA596' });
+    const pf2 = ins('portfolios', { name: 'Развитие компании', description: 'Внутренние проекты', manager_id: uAdmin, color: '#6366F1' });
+    const stageSets = [['Подготовка', 'Настройка', 'Обучение', 'Запуск'], ['Аналитика', 'Разработка', 'Тестирование', 'Сдача']];
+    PR.forEach((p, i) => {
+      db.run(`UPDATE projects SET portfolio_id = ? WHERE id = ?`, [i === 5 ? pf2 : pf1, p.id]);
+      const names = stageSets[i % 2];
+      const span = Math.max(4, Math.round((new Date(p.end).getTime() - new Date(p.start).getTime()) / 864e5));
+      const doneUntil = p.status === 'done' ? names.length : p.status === 'planning' ? 0 : Math.min(names.length - 1, Math.floor(((Date.now() - new Date(p.start).getTime()) / 864e5 / span) * names.length));
+      names.forEach((name, k) => {
+        const from = addDays(p.start, Math.round((span / names.length) * k));
+        ins('project_stages', { project_id: p.id, name, sort: k + 1, status: k < doneUntil ? 'done' : k === doneUntil ? 'active' : 'pending', date_from: from, date_to: addDays(from, Math.round(span / names.length) - 1) });
+      });
+    });
+    ins('project_templates', { name: 'Внедрение CRM «под ключ»', description: 'Типовой проект внедрения на 30 дней', duration_days: 30,
+      stages: [{ name: 'Подготовка', days: 7 }, { name: 'Настройка', days: 12 }, { name: 'Обучение', days: 6 }, { name: 'Запуск', days: 5 }],
+      tasks: [{ title: 'Собрать требования', offset_days: 0, duration_days: 3 }, { title: 'Настроить воронку и роли', offset_days: 7, duration_days: 5 }, { title: 'Импортировать клиентов', offset_days: 10, duration_days: 2 },
+        { title: 'Настроить обмен с 1С', offset_days: 12, duration_days: 5 }, { title: 'Обучить пользователей', offset_days: 19, duration_days: 4 }, { title: 'Подписать акт', offset_days: 28, duration_days: 2 }] });
+    ins('project_templates', { name: 'Интеграция с 1С', description: 'Подключение обмена с 1С: справочники, счета, оплаты', duration_days: 14,
+      stages: [{ name: 'Аудит базы 1С', days: 3 }, { name: 'Настройка обмена', days: 6 }, { name: 'Проверка на копии', days: 3 }, { name: 'Перевод в работу', days: 2 }],
+      tasks: [{ title: 'Получить доступ к копии базы', offset_days: 0, duration_days: 1 }, { title: 'Опубликовать OData', offset_days: 1, duration_days: 2 }, { title: 'Сопоставить справочники', offset_days: 3, duration_days: 4 }, { title: 'Проверить обмен на копии', offset_days: 9, duration_days: 3 }] });
+
+    ins('task_templates', { name: 'Подготовить КП', title: 'Подготовить коммерческое предложение', description: 'Собрать требования, посчитать стоимость, оформить КП по шаблону.', priority: 'high', estimate_hours: 2, duration_days: 1, checklist: ['Уточнить состав работ', 'Посчитать стоимость', 'Согласовать скидку', 'Отправить клиенту'], tags: ['продажи'] });
+    ins('task_templates', { name: 'Онбординг клиента', title: 'Провести онбординг нового клиента', priority: 'normal', estimate_hours: 4, duration_days: 5, checklist: ['Приветственное письмо', 'Созвон-знакомство', 'Доступы в систему', 'Обучение администратора'], tags: ['внедрение'] });
+    ins('task_templates', { name: 'Закрыть месяц', title: 'Закрыть месяц в бухгалтерии', priority: 'high', estimate_hours: 6, duration_days: 3, assignee_id: uPavlova, checklist: ['Сверить выписки', 'Выставить акты', 'Начислить зарплату', 'Сформировать отчёт ОПиУ'], tags: ['финансы'] });
+    const tl1 = ins('task_lists', { name: 'Личное', user_id: uAdmin, color: '#EC4899', sort: 1 });
+    const tl2 = ins('task_lists', { name: 'Стратегия', user_id: uAdmin, color: '#6366F1', sort: 2 });
+    const myTasks = db.all(`SELECT id FROM tasks WHERE assignee_id = ? ORDER BY id LIMIT 6`, [uAdmin]);
+    myTasks.forEach((t, i) => { if (i < 2) db.run(`UPDATE tasks SET list_id = ? WHERE id = ?`, [i ? tl2 : tl1, t.id]); });
+    db.run(`UPDATE tasks SET viewed_at = created_at WHERE assignee_id != ? OR id % 3 != 0`, [uAdmin]);
+    db.run(`UPDATE tasks SET helpers = ? WHERE id IN (SELECT id FROM tasks WHERE project_id IS NOT NULL ORDER BY id LIMIT 6)`, [JSON.stringify([uZaitseva])]);
+    db.run(`UPDATE tasks SET helpers = ? WHERE id IN (SELECT id FROM tasks WHERE project_id IS NULL AND assignee_id != ? ORDER BY id LIMIT 3)`, [JSON.stringify([uAdmin]), uAdmin]);
+    db.run(`UPDATE tasks SET progress = 100 WHERE status = 'done'`);
+    db.run(`UPDATE tasks SET progress = 40 + (id % 5) * 10 WHERE status IN ('in_progress','review')`);
+    db.run(`UPDATE tasks SET bill_customer = 1, bill_by = 'fact', hour_price = 3500 WHERE project_id IS NOT NULL AND id % 2 = 0`);
+    for (const p of PR) {
+      const ts2 = db.all(`SELECT id FROM tasks WHERE project_id = ? ORDER BY sort, id LIMIT 4`, [p.id]);
+      for (let k = 1; k < ts2.length; k++) ins('task_links', { task_id: ts2[k].id, depends_on_id: ts2[k - 1].id, kind: 'fs', lag_days: k === 2 ? 2 : 0 });
+    }
+
+    const kbMain = ins('kb_bases', { name: 'Регламенты компании', description: 'Правила, продажи и внедрение', icon: '📚', access: 'all', sort: 1 });
+    const kbNew = ins('kb_bases', { name: 'Курс для новичков', description: 'Всё для первой недели в компании', icon: '🎓', access: 'all', sort: 2 });
+    db.run(`UPDATE kb_sections SET base_id = ? WHERE id IN (?, ?, ?)`, [kbMain, kb1, kb2, kb3]);
+    db.run(`UPDATE kb_sections SET base_id = ? WHERE id = ?`, [kbNew, kb4]);
+
+    const dirImpl = ins('directions', { name: 'Внедрение', color: '#0FA596', description: 'Проекты внедрения и настройки' });
+    const dirLic = ins('directions', { name: 'Лицензии и поддержка', color: '#6366F1', description: 'Подписки и техподдержка' });
+    const dirHw = ins('directions', { name: 'Оборудование', color: '#F59E0B', description: 'Продажа техники' });
+    db.run(`UPDATE fin_operations SET direction_id = ? WHERE kind = 'income' AND description LIKE '%оддержк%'`, [dirLic]);
+    db.run(`UPDATE fin_operations SET direction_id = ? WHERE kind = 'income' AND description LIKE '%лицензи%'`, [dirLic]);
+    db.run(`UPDATE fin_operations SET direction_id = ? WHERE kind = 'income' AND direction_id IS NULL AND category_id = ?`, [dirHw, cat['Выручка от продажи товаров']]);
+    db.run(`UPDATE fin_operations SET direction_id = ? WHERE kind = 'income' AND direction_id IS NULL`, [dirImpl]);
+    db.run(`UPDATE fin_operations SET legal_entity_id = ?`, [le]);
+    const splitOp = db.get(`SELECT id, amount FROM fin_operations WHERE kind = 'expense' AND category_id = ? ORDER BY date DESC LIMIT 1`, [cat['Офисные расходы']]);
+    if (splitOp) {
+      ins('fin_splits', { operation_id: splitOp.id, category_id: cat['Офисные расходы'], amount: round2(splitOp.amount * 0.6) });
+      ins('fin_splits', { operation_id: splitOp.id, category_id: cat['Связь и интернет'], amount: round2(splitOp.amount - round2(splitOp.amount * 0.6)) });
+    }
+
+    const recItems = (pid: number, qty: number) => { const p = P.find((x) => x.id === pid)!; return [{ product_id: p.id, name: p.name, qty, unit: p.unit, price: p.price, vat: '22' }]; };
+    const nextMonth1 = (() => { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() + 1); return localDate(d); })();
+    ins('recurring_invoices', { name: 'Техподдержка «Премиум»', company_id: C[0].id, legal_entity_id: le, period: 'month', next_date: nextMonth1, pay_days: 5, vat_mode: 'included', items: recItems(P[15].id, 1), total: P[15].price, auto_send: 1, is_active: 1, responsible_id: uSalesHead });
+    ins('recurring_invoices', { name: 'Лицензии на 25 пользователей', company_id: C[1].id, legal_entity_id: le, period: 'month', next_date: addDays(T, 9), pay_days: 5, vat_mode: 'included', items: recItems(P[6].id, 25), total: P[6].price * 25, auto_send: 1, is_active: 1, responsible_id: uOrlov });
+    ins('recurring_invoices', { name: 'Облачное хранилище, годовая подписка', company_id: C[5].id, legal_entity_id: le, period: 'year', next_date: addDays(T, 40), pay_days: 10, vat_mode: 'included', items: recItems(P[7].id, 1), total: P[7].price, auto_send: 0, is_active: 1, responsible_id: uVetrova });
+
+    const offerDeals = D.filter((d) => d.stage === S[3] || d.stage === S[4]).slice(0, 4);
+    offerDeals.forEach((d, i) => {
+      const date = addDays(d.created, 3) > T ? T : addDays(d.created, 3);
+      const off = ins('offers', { number: String(i + 1), date, valid_until: addDays(date, 14), company_id: d.company, contact_id: d.contact, deal_id: d.id, legal_entity_id: le,
+        status: i === 0 ? 'accepted' : i === 3 ? 'draft' : 'sent', vat_mode: 'included', total: d.amount, responsible_id: d.resp,
+        intro: 'Благодарим за интерес к нашим услугам. Предлагаем решение под ваши задачи.', terms: 'Срок внедрения — 30 рабочих дней. Оплата: 50% предоплата, 50% после запуска.' });
+      for (const it of db.all(`SELECT * FROM deal_products WHERE deal_id = ?`, [d.id])) {
+        ins('offer_items', { offer_id: off, product_id: it.product_id, name: it.name, qty: it.qty, unit: it.unit, price: it.price, discount: it.discount, vat: it.vat });
+      }
+    });
+    ins('invitations', { email: 'new.manager@vela.demo', name: 'Новый менеджер', role_id: roleIds['Менеджер по продажам'], status: 'pending', invited_by: uSalesHead });
+    ins('invitations', { email: 'designer@vela.demo', name: 'Дизайнер', role_id: roleIds['Сотрудник'], status: 'pending', invited_by: uAdmin });
+    for (const a of db.all(`SELECT id FROM activities WHERE kind IN ('comment','call','meeting') ORDER BY id LIMIT 30`)) {
+      if (R.chance(0.4)) db.run(`UPDATE activities SET likes = ? WHERE id = ?`, [JSON.stringify([R.pick(U), R.pick(U)].filter((v, i, arr) => arr.indexOf(v) === i)), a.id]);
+    }
+    void dirHw;
 
     // ---------- notifications ----------
     const note = (user: number, text: string, link: string, kind: string, minutesAgo: number, read = false) =>

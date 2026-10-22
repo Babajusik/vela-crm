@@ -187,3 +187,84 @@ test('sort/limit params are not treated as filters', async () => {
   assert.ok(s.items.length >= 6);
   assert.ok(s.items[0].sort <= s.items[1].sort);
 });
+
+test('parity: CRM activities, flags and counterparties', async () => {
+  const deal = (await call('GET', '/api/e/deals', undefined, { limit: '1', is_archived__ne: '1' })).items[0];
+  const a = await call('POST', '/api/e/crm_activities', { kind: 'call', subject: 'Перезвонить', due_at: '2020-01-01T10:00', deal_id: deal.id });
+  const flags = await call('GET', '/api/crm/activity-flags');
+  assert.ok(flags[deal.id].overdue >= 1);
+  await call('PATCH', `/api/e/crm_activities/${a.id}`, { is_done: 1, result: 'Договорились' });
+  const tl = await call('GET', `/api/e/deals/${deal.id}/timeline`);
+  assert.ok(tl.some((x: any) => /Выполнено: Перезвонить/.test(x.text)));
+  const cp = await call('GET', '/api/crm/counterparties', undefined, { q: 'вектор' });
+  assert.ok(cp.some((x: any) => x.entity === 'companies'));
+  const rep = await call('GET', '/api/crm/report');
+  assert.ok(rep.totals.created > 0 && rep.stages.length > 0);
+});
+
+test('parity: not-equal filter keeps empty values', async () => {
+  const all = (await call('GET', '/api/e/tasks', undefined, { limit: '1' })).total;
+  const notArchived = (await call('GET', '/api/e/tasks', undefined, { limit: '1', is_archived__ne: '1' })).total;
+  assert.equal(notArchived, all);
+});
+
+test('parity: task template, links, progress from checklist', async () => {
+  const tpl = (await call('GET', '/api/e/task_templates')).items[0];
+  const t = await call('POST', '/api/tasks/from-template', { template_id: tpl.id });
+  const items = (await call('GET', '/api/e/checklist_items', undefined, { task_id: String(t.id) })).items;
+  assert.ok(items.length >= 3);
+  await call('PATCH', `/api/e/checklist_items/${items[0].id}`, { done: 1 });
+  const after = await call('GET', `/api/e/tasks/${t.id}`);
+  assert.equal(after.progress, Math.round(100 / items.length));
+  assert.ok(after.viewed_at || after.assignee_id !== 1);
+});
+
+test('parity: project from template creates stages and tasks', async () => {
+  const tpl = (await call('GET', '/api/e/project_templates')).items[0];
+  const p = await call('POST', '/api/projects/from-template', { template_id: tpl.id, name: 'Тестовый проект' });
+  const st = await call('GET', '/api/projects/stages', undefined, { ids: String(p.id) });
+  assert.equal(st[p.id].stages.length, tpl.stages.length);
+  const tasks = (await call('GET', '/api/e/tasks', undefined, { project_id: String(p.id) })).total;
+  assert.equal(tasks, tpl.tasks.length);
+  const first = (await call('GET', '/api/e/project_stages', undefined, { project_id: String(p.id), sort: 'sort', dir: 'asc' })).items;
+  await call('PATCH', `/api/e/project_stages/${first[0].id}`, { status: 'done' });
+  const next = await call('GET', `/api/e/project_stages/${first[1].id}`);
+  assert.equal(next.status, 'active');
+});
+
+test('parity: finance balance sheet, recurring invoices, offers, splits', async () => {
+  const bs = await call('GET', '/api/finance/balance-sheet');
+  assert.ok(bs.total_assets > 0);
+  assert.equal(Math.round(bs.equity), Math.round(bs.total_assets - bs.total_liabilities));
+  const rec = (await call('GET', '/api/e/recurring_invoices', undefined, { limit: '1' })).items[0];
+  const inv = await call('POST', `/api/finance/recurring/${rec.id}/run`);
+  assert.ok(inv.total > 0);
+  const rec2 = await call('GET', `/api/e/recurring_invoices/${rec.id}`);
+  assert.ok(rec2.next_date > rec.next_date);
+  const offer = (await call('GET', '/api/e/offers', undefined, { limit: '1' })).items[0];
+  const fromOffer = await call('POST', `/api/offers/${offer.id}/invoice`);
+  assert.equal(fromOffer.total, offer.total);
+  const html = await call('GET', `/api/print/offer/${offer.id}`);
+  assert.match(html.html, /Коммерческое предложение/);
+  const cats = (await call('GET', '/api/e/fin_categories', undefined, { kind: 'expense', limit: '100' })).items;
+  const op = await call('POST', '/api/e/fin_operations', { kind: 'expense', date: new Date().toISOString().slice(0, 10), amount: 1000, account_id: 1, category_id: cats[0].id, status: 'fact' });
+  await call('POST', '/api/e/fin_splits', { operation_id: op.id, category_id: cats[1].id, amount: 400 });
+  await call('POST', '/api/e/fin_splits', { operation_id: op.id, category_id: cats[2].id, amount: 600 });
+  const pnl = await call('GET', '/api/finance/pnl');
+  const line = pnl.expenses.find((l: any) => l.id === cats[2].id);
+  assert.ok(line && line.total >= 600);
+});
+
+test('parity: likes, replies and per-user preferences', async () => {
+  const deal = (await call('GET', '/api/e/deals', undefined, { limit: '1' })).items[0];
+  await call('POST', `/api/e/deals/${deal.id}/comment`, { text: 'Тестовый комментарий' });
+  const c = (await call('GET', `/api/e/deals/${deal.id}/timeline`)).find((a: any) => a.text === 'Тестовый комментарий');
+  const liked = await call('POST', `/api/activities/${c.id}/like`);
+  assert.equal(liked.likes.length, 1);
+  await call('POST', `/api/e/deals/${deal.id}/comment`, { text: 'Ответ', parent_id: c.id });
+  const tl = await call('GET', `/api/e/deals/${deal.id}/timeline`);
+  assert.ok(tl.some((a: any) => a.parent_id === c.id));
+  await call('PUT', '/api/prefs/dashboards', [{ id: 'x', title: 'Мой', widgets: ['funnel'] }]);
+  const pref = await call('GET', '/api/prefs/dashboards');
+  assert.equal(pref[0].title, 'Мой');
+});

@@ -5,7 +5,7 @@ import type { Field } from '../../core/types.ts';
 import { api, saveText } from '../api.ts';
 import { relative } from '../lib/format.ts';
 import { useAuth, useInvalidate, useList, useMeta, useApi, type ListParams } from '../lib/state.tsx';
-import { Avatar, Button, Card, Checkbox, EmptyState, FormRow, IconButton, Input, Loading, Modal, Select, Segmented, Textarea, cx, useToast } from './ui.tsx';
+import { Avatar, Button, Card, Checkbox, EmptyState, FormRow, IconButton, Input, Loading, Modal, Select, Segmented, Textarea, cx, useMediaQuery, useToast } from './ui.tsx';
 import { FieldInput, FieldValue, RecordForm, customToField } from './fields.tsx';
 
 // ---------------- table ----------------
@@ -26,7 +26,32 @@ export function DataTable<T extends { id: number }>({ entity, columns, rows, onR
   const cols: Column<T>[] = columns.map((c) => (typeof c === 'string' ? { key: c, sortable: true } : c));
   const fieldOf = (k: string): Field | undefined => (entity ? field(entity, k) : undefined);
   const allOn = !!rows.length && rows.every((r) => selected?.includes(r.id));
+  const phone = useMediaQuery('(max-width: 639px)');
   if (!rows.length) return <>{empty ?? <EmptyState title="Пока пусто" text="Записей нет или ни одна не подходит под фильтры." compact />}</>;
+  if (phone) {
+    const [head, ...rest] = cols;
+    const cell = (c: Column<T>, r: T) => {
+      const f = fieldOf(c.key);
+      return c.render ? c.render(r) : f ? <FieldValue field={f} item={r as any} /> : String((r as any)[c.key] ?? '');
+    };
+    return (
+      <ul className="divide-y divide-line">
+        {rows.map((r) => (
+          <li key={r.id} onClick={() => onRowClick?.(r)} className={cx('px-4 py-3', onRowClick && 'cursor-pointer active:bg-surface-2')}>
+            <div className="truncate text-[15px] font-semibold">{cell(head, r)}</div>
+            <dl className="mt-1.5 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[13px]">
+              {rest.slice(0, 4).map((c) => (
+                <div key={c.key} className="contents">
+                  <dt className="text-faint">{c.label ?? fieldOf(c.key)?.label ?? c.key}</dt>
+                  <dd className="min-w-0 truncate text-right">{cell(c, r)}</dd>
+                </div>
+              ))}
+            </dl>
+          </li>
+        ))}
+      </ul>
+    );
+  }
   return (
     <div className="overflow-x-auto">
       <table className="w-full min-w-[640px] border-separate border-spacing-0 text-sm">
@@ -230,60 +255,6 @@ export function Kanban<T extends { id: number }>({ columns, items, groupOf, rend
 }
 
 // ---------------- timeline ----------------
-const KIND_ICON: Record<string, ReactNode> = {
-  comment: <MessageSquare className="size-3.5" />, call: <Phone className="size-3.5" />, meeting: <UsersIcon className="size-3.5" />,
-};
-const KIND_LABEL: Record<string, string> = { comment: 'Комментарий', call: 'Звонок', meeting: 'Встреча', email: 'Письмо', system: 'Событие', stage: 'Стадия' };
-
-export function Timeline({ entity, id }: { entity: string; id: number }) {
-  const { data, refetch, isLoading } = useApi<any[]>(['timeline', entity, id], `/api/e/${entity}/${id}/timeline`);
-  const [text, setText] = useState('');
-  const [kind, setKind] = useState<'comment' | 'call' | 'meeting'>('comment');
-  const [busy, setBusy] = useState(false);
-  const toast = useToast();
-  const send = async () => {
-    if (!text.trim()) return;
-    setBusy(true);
-    try {
-      await api.post(`/api/e/${entity}/${id}/comment`, { text, kind });
-      setText('');
-      refetch();
-    } catch (e) { toast.error(e); } finally { setBusy(false); }
-  };
-  return (
-    <div>
-      <div className="rounded-xl border border-line bg-surface p-3">
-        <Segmented value={kind} onChange={setKind} options={[{ value: 'comment', label: 'Комментарий' }, { value: 'call', label: 'Звонок' }, { value: 'meeting', label: 'Встреча' }]} />
-        <Textarea className="mt-2" rows={2} value={text} onChange={(e) => setText(e.target.value)} placeholder={kind === 'call' ? 'Итоги звонка…' : kind === 'meeting' ? 'Итоги встречи…' : 'Напишите комментарий. @Имя Фамилия — упомянуть коллегу'}
-          onKeyDown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) send(); }} />
-        <div className="mt-2 flex items-center justify-between">
-          <span className="text-xs text-faint">Ctrl + Enter — отправить</span>
-          <Button size="sm" variant="primary" loading={busy} onClick={send} disabled={!text.trim()}>Добавить</Button>
-        </div>
-      </div>
-      {isLoading ? <Loading /> : (
-        <ol className="relative mt-4 space-y-4 border-l border-line pl-5">
-          {(data ?? []).map((a) => (
-            <li key={a.id} className="relative">
-              <span className={cx('absolute -left-[29px] top-0.5 flex size-[18px] items-center justify-center rounded-full ring-4 ring-canvas',
-                a.kind === 'system' || a.kind === 'stage' ? 'bg-surface-2 text-faint' : 'bg-primary-soft text-primary')}>
-                {KIND_ICON[a.kind] ?? <span className="size-1.5 rounded-full bg-current" />}
-              </span>
-              <div className="flex flex-wrap items-center gap-x-2 text-xs text-faint">
-                {a.user_name && <span className="font-semibold text-muted">{a.user_name}</span>}
-                <span>{KIND_LABEL[a.kind] ?? ''}</span>
-                <span>· {relative(a.created_at)}</span>
-              </div>
-              <p className={cx('mt-0.5 whitespace-pre-line text-sm', (a.kind === 'system' || a.kind === 'stage') ? 'text-muted' : 'rounded-lg bg-surface px-3 py-2 border border-line')}>{a.text}</p>
-            </li>
-          ))}
-          {!data?.length && <li className="text-sm text-faint">Событий пока нет</li>}
-        </ol>
-      )}
-    </div>
-  );
-}
-
 // ---------------- inline-edit field panel ----------------
 export function FieldsPanel({ entity, item, fields, onSaved, readOnly }: { entity: string; item: Record<string, any>; fields?: string[]; onSaved?: () => void; readOnly?: boolean }) {
   const { ent, custom } = useMeta();
@@ -454,3 +425,5 @@ export function UserChip({ user, size = 22 }: { user?: { title?: string; name?: 
   if (!user) return <span className="text-faint">—</span>;
   return <span className="inline-flex min-w-0 items-center gap-2"><Avatar name={user.title ?? user.name} color={user.color} size={size} /><span className="truncate">{user.title ?? user.name}</span></span>;
 }
+
+export { Feed as Timeline } from './feed.tsx';
