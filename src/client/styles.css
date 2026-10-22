@@ -1,0 +1,149 @@
+@import "tailwindcss";
+@import "@fontsource/manrope/400.css";
+@import "@fontsource/manrope/500.css";
+@import "@fontsource/manrope/600.css";
+@import "@fontsource/manrope/700.css";
+@import "@fontsource/manrope/800.css";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme inline {
+  --font-sans: "Manrope", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --color-canvas: var(--c-canvas);
+  --color-surface: var(--c-surface);
+  --color-surface-2: var(--c-surface-2);
+  --color-line: var(--c-line);
+  --color-line-strong: var(--c-line-strong);
+  --color-fg: var(--c-fg);
+  --color-muted: var(--c-muted);
+  --color-faint: var(--c-faint);
+  --color-primary: var(--c-primary);
+  --color-primary-hover: var(--c-primary-hover);
+  --color-primary-soft: var(--c-primary-soft);
+  --color-primary-fg: var(--c-primary-fg);
+  --color-accent: var(--c-accent);
+  --color-accent-soft: var(--c-accent-soft);
+  --color-success: var(--c-success);
+  --color-warning: var(--c-warning);
+  --color-danger: var(--c-danger);
+  --color-danger-soft: var(--c-danger-soft);
+  --color-side: var(--c-side);
+  --color-side-2: var(--c-side-2);
+  --color-side-fg: var(--c-side-fg);
+  --color-side-muted: var(--c-side-muted);
+
+  --color-brand-50: #ecfdf9;
+  --color-brand-100: #cff8ef;
+  --color-brand-200: #9fefdf;
+  --color-brand-300: #62dec9;
+  --color-brand-400: #2cc5af;
+  --color-brand-500: #12a994;
+  --color-brand-600: #0b8a7a;
+  --color-brand-700: #0d6e63;
+  --color-brand-800: #0f5850;
+  --color-brand-900: #104943;
+  --color-coral-50: #fff1ee;
+  --color-coral-100: #ffe0d9;
+  --color-coral-400: #ff8a7a;
+  --color-coral-500: #ff6b57;
+  --color-coral-600: #ea4d38;
+  --color-ink-950: #07121f;
+  --color-ink-900: #0b1a2a;
+  --color-ink-800: #12263a;
+  --color-ink-700: #1c3550;
+}
+
+:root {
+  --c-canvas: #f3f5f8;
+  --c-surface: #ffffff;
+  --c-surface-2: #f7f9fb;
+  --c-line: #e5e9ef;
+  --c-line-strong: #d3d9e2;
+  --c-fg: #0f1b2d;
+  --c-muted: #5b6b80;
+  --c-faint: #8a98aa;
+  --c-primary: #0b8a7a;
+  --c-primary-hover: #0d6e63;
+  --c-primary-soft: #e3f7f2;
+  --c-primary-fg: #ffffff;
+  --c-accent: #ff6b57;
+  --c-accent-soft: #fff1ee;
+  --c-success: #10a36f;
+  --c-warning: #d98a06;
+  --c-danger: #dc3b3b;
+  --c-danger-soft: #fdecec;
+  --c-side: #0b1a2a;
+  --c-side-2: #12263a;
+  --c-side-fg: #e7eef6;
+  --c-side-muted: #8fa3ba;
+  color-scheme: light;
+}
+
+.dark {
+  --c-canvas: #08111c;
+  --c-surface: #0f1a28;
+  --c-surface-2: #132132;
+  --c-line: #1e2d40;
+  --c-line-strong: #2a3d55;
+  --c-fg: #e6edf5;
+  --c-muted: #93a5bb;
+  --c-faint: #6b7f97;
+  --c-primary: #2cc5af;
+  --c-primary-hover: #62dec9;
+  --c-primary-soft: #0f2f2c;
+  --c-primary-fg: #04201c;
+  --c-accent: #ff8a7a;
+  --c-accent-soft: #3a1d19;
+  --c-success: #34d399;
+  --c-warning: #fbbf24;
+  --c-danger: #f87171;
+  --c-danger-soft: #3a1a1a;
+  --c-side: #050c15;
+  --c-side-2: #0d1a29;
+  --c-side-fg: #e7eef6;
+  --c-side-muted: #7f93ab;
+  color-scheme: dark;
+}
+
+html, body, #root { height: 100%; }
+body {
+  margin: 0;
+  background: var(--c-canvas);
+  color: var(--c-fg);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: "tnum" 0;
+}
+.tabular { font-variant-numeric: tabular-nums; }
+
+* { scrollbar-width: thin; scrollbar-color: var(--c-line-strong) transparent; }
+::selection { background: color-mix(in srgb, var(--c-primary) 25%, transparent); }
+
+:focus-visible { outline: 2px solid var(--c-primary); outline-offset: 2px; border-radius: 6px; }
+
+.prose-vela { line-height: 1.65; color: var(--c-fg); }
+.prose-vela h1 { font-size: 1.6rem; font-weight: 800; margin: 1.2em 0 .5em; }
+.prose-vela h2 { font-size: 1.25rem; font-weight: 700; margin: 1.2em 0 .4em; }
+.prose-vela h3 { font-size: 1.05rem; font-weight: 700; margin: 1em 0 .3em; }
+.prose-vela p { margin: .55em 0; }
+.prose-vela ul { list-style: disc; padding-left: 1.4em; margin: .5em 0; }
+.prose-vela ol { list-style: decimal; padding-left: 1.4em; margin: .5em 0; }
+.prose-vela a { color: var(--c-primary); text-decoration: underline; }
+.prose-vela code { background: var(--c-surface-2); border: 1px solid var(--c-line); border-radius: 6px; padding: 1px 5px; font-size: .9em; }
+.prose-vela table { border-collapse: collapse; width: 100%; margin: .8em 0; }
+.prose-vela th, .prose-vela td { border: 1px solid var(--c-line); padding: 6px 8px; text-align: left; }
+.prose-vela blockquote { border-left: 3px solid var(--c-primary); padding-left: 12px; color: var(--c-muted); }
+
+@keyframes vela-in { from { opacity: 0; transform: translateY(6px) scale(.985); } to { opacity: 1; transform: none; } }
+@keyframes vela-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes vela-slide { from { transform: translateX(16px); opacity: 0; } to { transform: none; opacity: 1; } }
+.anim-in { animation: vela-in .16s ease-out; }
+.anim-fade { animation: vela-fade .14s ease-out; }
+.anim-slide { animation: vela-slide .18s ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .anim-in, .anim-fade, .anim-slide { animation: none; }
+}
+
+.kanban-col { min-width: 280px; width: 280px; }
+.drag-over { outline: 2px dashed var(--c-primary); outline-offset: -4px; }

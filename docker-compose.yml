@@ -1,0 +1,14 @@
+services:
+  vela:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      COMPANY_NAME: "ООО «Моя компания»"
+      ADMIN_EMAIL: "admin@company.ru"
+      # пароль администратора при первом запуске; если не задать — сгенерируется и появится в логах
+      ADMIN_PASSWORD: "смените-меня"
+      # DEMO: "1"   # раскомментируйте, чтобы запустить с демо-данными
+    volumes:
+      - ./data:/data
