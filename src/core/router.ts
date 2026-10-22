@@ -12,6 +12,8 @@ import * as misc from './services/misc.ts';
 import * as odata from './onec/odata.ts';
 import * as parity from './services/parity.ts';
 import * as cml from './onec/commerceml.ts';
+import * as comms from './services/comms.ts';
+import * as tel from './services/telephony.ts';
 import { hashPassword } from './util.ts';
 
 type Handler = (c: Ctx, p: Record<string, string>, req: Req) => unknown | Promise<unknown>;
@@ -174,9 +176,94 @@ r('GET', '/api/bp/my', (c) => bp.myApprovals(c));
 
 // ---------------- communications & mail ----------------
 r('POST', '/api/conversations/simulate', (c) => misc.simulateIncoming(c));
-r('POST', '/api/conversations/:id/reply', (c, p, req) => misc.replyConversation(c, num(p.id), req.body?.text));
+/** channels the server talks to over the network; a website chat reply is picked up by the widget itself */
+const NETWORK_CHANNELS = new Set(['telegram', 'vk', 'avito', 'whatsapp']);
+
+r('POST', '/api/conversations/:id/reply', async (c, p, req) => {
+  const res = misc.replyConversation(c, num(p.id), req.body?.text);
+  const ch = res.channel;
+  if (!ch || !NETWORK_CHANNELS.has(ch.kind) || !c.deps.integrations) return { message: res.message, delivered: ch?.kind === 'webchat' ? true : null };
+  try {
+    const out = await c.deps.integrations.sendToChannel(ch, String(res.handle ?? ''), String(res.message.text));
+    if (out.extId) c.db.run(`UPDATE conv_messages SET ext_id = ? WHERE id = ?`, [out.extId, res.message.id]);
+    return { message: res.message, delivered: true };
+  } catch (e) {
+    const error = (e as Error).message;
+    c.db.run(`UPDATE conv_messages SET send_error = ? WHERE id = ?`, [error, res.message.id]);
+    return { message: { ...res.message, send_error: error }, delivered: false, error };
+  }
+});
 r('POST', '/api/conversations/:id/deal', (c, p) => misc.conversationToDeal(c, num(p.id)));
-r('POST', '/api/mail/send', (c, _p, req) => misc.sendMail(c, req.body ?? {}));
+r('POST', '/api/mail/send', async (c, _p, req) => {
+  const res = misc.sendMail(c, req.body ?? {});
+  const box = res.mailbox;
+  if (!box?.smtp_host || !box.password || !c.deps.integrations) return { mail: res.mail, delivered: false };
+  try {
+    const out = await c.deps.integrations.sendMail(box, {
+      from: box.email, fromName: box.name || c.user.name, to: res.mail.to_addr, cc: res.mail.cc ?? undefined, subject: res.mail.subject ?? '', text: res.mail.body ?? '',
+      inReplyTo: res.mail.in_reply_to ?? undefined, attachments: res.files.map((f) => ({ name: f.name, mime: f.mime, fileId: f.id })),
+    });
+    comms.markMailSent(c, res.mail.id, { messageId: out.messageId });
+  } catch (e) {
+    comms.markMailSent(c, res.mail.id, { error: (e as Error).message });
+    fail(502, `Письмо не отправлено: ${(e as Error).message}. Оно сохранено в черновиках.`);
+  }
+  return { mail: get(c, 'mails', res.mail.id), delivered: true };
+});
+r('GET', '/api/mail/mailboxes', (c) => comms.myMailboxes(c));
+r('POST', '/api/mail/mailboxes', (c, _p, req) => comms.saveMailbox(c, null, req.body ?? {}));
+r('PUT', '/api/mail/mailboxes/:id', (c, p, req) => comms.saveMailbox(c, num(p.id), req.body ?? {}));
+r('POST', '/api/mail/mailboxes/:id/test', async (c, p) => {
+  const box = comms.mailboxForUse(c, num(p.id));
+  if (!c.deps.integrations) fail(501, 'Проверка подключения работает в серверной версии CRM');
+  try {
+    const text = await c.deps.integrations!.testMailbox(box);
+    comms.markMailboxSync(c, box.id, null);
+    return { ok: true, text };
+  } catch (e) {
+    comms.markMailboxSync(c, box.id, (e as Error).message);
+    return fail(502, (e as Error).message);
+  }
+});
+r('POST', '/api/mail/mailboxes/:id/sync', async (c, p) => {
+  const box = comms.mailboxForUse(c, num(p.id));
+  if (!c.deps.integrations) fail(501, 'Получение писем работает в серверной версии CRM');
+  try {
+    const count = await c.deps.integrations!.syncMailbox(box);
+    comms.markMailboxSync(c, box.id, null);
+    return { ok: true, count };
+  } catch (e) {
+    comms.markMailboxSync(c, box.id, (e as Error).message);
+    return fail(502, (e as Error).message);
+  }
+});
+
+async function checkChannel(c: Ctx, id: number) {
+  const raw = getRaw(c.db, 'channels', id)!;
+  if (c.deps.integrations && NETWORK_CHANNELS.has(raw.kind)) {
+    try { comms.markChannel(c, id, { account: await c.deps.integrations.testChannel(raw), error: null }); }
+    catch (e) { comms.markChannel(c, id, { error: (e as Error).message }); }
+  }
+  return get(c, 'channels', id);
+}
+r('GET', '/api/channels/:id/settings', (c, p) => comms.channelSettingsPublic(c, num(p.id)));
+r('POST', '/api/channels', (c, _p, req) => checkChannel(c, comms.saveChannel(c, null, req.body ?? {}).id));
+r('PUT', '/api/channels/:id', (c, p, req) => checkChannel(c, comms.saveChannel(c, num(p.id), req.body ?? {}).id));
+r('POST', '/api/channels/:id/test', (c, p) => { requirePerm(c, 'communications', 'admin'); return checkChannel(c, num(p.id)); });
+r('GET', '/api/public/chat/:key', (c, p) => comms.webchatInfo(c, p.key), true);
+r('GET', '/api/public/chat/:key/messages', (c, p, req) => comms.webchatPoll(c, p.key, req.query), true);
+r('POST', '/api/public/chat/:key/messages', (c, p, req) => comms.webchatPost(c, p.key, req.body ?? {}), true);
+
+// ---------------- telephony ----------------
+r('GET', '/api/telephony/settings', (c) => tel.publicTelephonySettings(c));
+r('PUT', '/api/telephony/settings', (c, _p, req) => tel.saveTelephonySettings(c, req.body ?? {}));
+r('GET', '/api/telephony/active', (c) => tel.activeCalls(c));
+r('POST', '/api/telephony/call', (c, _p, req) => tel.requestCall(c, String(req.body?.phone ?? '')));
+r('POST', '/api/telephony/simulate', (c) => tel.simulateCall(c));
+r('POST', '/api/telephony/demo/:id/:action', (c, p) => {
+  if (!['answer', 'end', 'miss'].includes(p.action)) fail(404, 'Не найдено');
+  return tel.demoCallAction(c, num(p.id), p.action as 'answer' | 'end' | 'miss');
+});
 
 // ---------------- import / export / backup ----------------
 r('POST', '/api/import/:entity', (c, p, req) => misc.importRows(c, { entity: p.entity, rows: req.body?.rows, dedupe: req.body?.dedupe }));

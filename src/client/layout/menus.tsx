@@ -2,7 +2,7 @@
 import type { ReactNode } from 'react';
 import { Archive, BarChart3, BookOpen, Briefcase, Building2, Calendar, CalendarClock, CheckSquare, Clock, Coins, Contact, FileCheck2, FileText, FileUp, Folder,
   FolderKanban, GanttChart, GitBranch, Inbox, Kanban, Landmark, LayoutList, Layers, ListChecks, ListTodo, Mail, MessageCircle, Network, Package, PiggyBank,
-  Plane, Receipt, Repeat, Scale, Send, Settings, Shapes, Sparkles, StickyNote, Tags, Target, UserPlus, Users, Wallet, Workflow, Zap, Wrench, HandCoins, Boxes, PlugZap } from 'lucide-react';
+  Plane, Receipt, Repeat, Scale, Send, Settings, Shapes, Sparkles, StickyNote, Tags, Target, UserPlus, Users, Wallet, Workflow, Zap, Wrench, HandCoins, Boxes, PlugZap, PhoneCall, MessagesSquare } from 'lucide-react';
 
 export interface MenuLink { to: string; label: string; icon?: ReactNode; create?: string; count?: string }
 export interface MenuSection { title?: string; links: MenuLink[] }
@@ -42,6 +42,9 @@ export const MENUS: ModuleMenu[] = [
     ] }, { title: 'Продажи', links: [
       { to: '/crm/invoices', label: 'Счета на оплату', icon: i(<Receipt />), create: 'invoices' }, { to: '/finance/offers', label: 'Предложения', icon: i(<Send />), create: 'offers' },
       { to: '/crm/acts', label: 'Акты', icon: i(<FileCheck2 />) }, { to: '/crm/forms', label: 'Веб-формы', icon: i(<Inbox />) },
+    ] }, { title: 'Общение с клиентами', links: [
+      { to: '/communications', label: 'Диалоги', icon: i(<MessagesSquare />) }, { to: '/communications/calls', label: 'Звонки', icon: i(<PhoneCall />) },
+      { to: '/mail', label: 'Почта', icon: i(<Mail />) },
     ] }],
     footer: [{ to: '/crm/report', label: 'Отчёт', icon: i(<BarChart3 />) }, { to: '/settings/automations', label: 'Автодействия', icon: i(<Zap />) }, { to: '/settings/pipelines', label: 'Настройки', icon: i(<Settings />) }],
   },
@@ -110,6 +113,7 @@ export const EXTRA: ExtraModule[] = [
   { key: 'portal', label: 'Кабинет клиента', to: '/portal', icon: <Briefcase />, color: '#0EA5E9', module: 'portal' },
   { key: 'bank', label: 'Загрузка выписки', to: '/finance/import', icon: <FileUp />, color: '#22C55E', module: 'finance' },
   { key: 'onec', label: 'Интеграция с 1С', to: '/settings/onec', icon: <PlugZap />, color: '#EF4444', module: 'settings' },
+  { key: 'telephony', label: 'Телефония', to: '/settings/telephony', icon: <PhoneCall />, color: '#0EA5E9', module: 'settings' },
   { key: 'gp', label: 'Бизнес-автоматизация', to: '/settings/automations', icon: <Wrench />, color: '#F59E0B', module: 'settings' },
 ];
 

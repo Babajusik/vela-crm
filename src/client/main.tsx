@@ -68,7 +68,7 @@ function Guard() {
           <Route path="team/*" element={<Team />} />
           <Route path="calendar" element={<Calendar />} />
           <Route path="messenger" element={<Messenger />} />
-          <Route path="communications" element={<Communications />} />
+          <Route path="communications/*" element={<Communications />} />
           <Route path="mail" element={<Mail />} />
           <Route path="kb" element={<Kb />} />
           <Route path="kb/:id" element={<Kb />} />

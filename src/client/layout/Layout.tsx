@@ -6,6 +6,7 @@ import { api, IS_DEMO } from '../api.ts';
 import { deadlineInfo, minutes, relative } from '../lib/format.ts';
 import { useApi, useAuth, useInvalidate, useList } from '../lib/state.tsx';
 import { Avatar, Button, FormRow, IconButton, Input, Kbd, MenuItem, Modal, Popover, cx, useToast } from '../ui/ui.tsx';
+import { IncomingCallCard } from '../ui/phone.tsx';
 import { RecordForm } from '../ui/fields.tsx';
 import { ErrorBoundary } from '../ui/ErrorBoundary.tsx';
 import { Logo } from './Logo.tsx';
@@ -523,6 +524,7 @@ export function Layout() {
         </div>
       </main>
       <BottomBar open={open} setOpen={setOpen} />
+      <IncomingCallCard />
       {create && <RecordForm entity={create} open onClose={() => setCreate(null)} initial={initial}
         onSaved={(r) => { if (CREATE_TARGET[create]) nav(CREATE_TARGET[create] + r.id); }} />}
     </div>

@@ -533,6 +533,33 @@ export async function seed(db: DB): Promise<void> {
     mail('inbox', 'Сервис рассылок', 'noreply@service.example', 'sales@vela.demo', 'Ваш отчёт за неделю готов', 'Открытий: 412, кликов: 37.', 50, true);
     mail('sent', 'Отдел продаж Vela', 'sales@vela.demo', 'e.smirnova@mail.example', 'Коммерческое предложение', 'Елена, добрый день! Во вложении КП. Готовы провести демо в удобное время.', 1, true, C[1].id);
 
+    // ---------- more channels, website chat, telephony ----------
+    const vkCh = ins('channels', { name: 'Сообщество ВКонтакте', kind: 'vk', responsible_id: uGromov, is_active: 1, account: 'Vela CRM', settings: {} });
+    const avitoCh = ins('channels', { name: 'Авито: услуги внедрения', kind: 'avito', responsible_id: uVetrova, is_active: 1, account: 'Вела Демо', settings: {} });
+    db.run(`UPDATE channels SET settings = ? WHERE id = ?`, [JSON.stringify({ widget_key: 'demo-site-chat-key' }), web]);
+    conv(vkCh, 'Алина Мельникова', 'vk:51234567', 'new', uGromov, [['in', 'Здравствуйте! Можно ли подключить вашу CRM к нашему интернет-магазину на 1С-Битрикс?', 25]]);
+    conv(avitoCh, 'Павел Орехов', 'avito:u2i-demo-1', 'open', uVetrova, [['in', 'Объявление «Внедрение CRM под ключ»\nДобрый день, актуально? Нас 8 человек', 300], ['out', 'Добрый день! Да, актуально. Удобно созвониться сегодня?', 290]]);
+
+    set('telephony', { provider: 'demo', api_key: '', api_secret: '', hook_token: '', unknown_to_lead: true, missed_to_activity: true });
+    db.run(`UPDATE users SET phone_ext = CAST(100 + id AS TEXT)`);
+    const salesTeam = [uOrlov, uVetrova, uGromov];
+    const callStatuses = ['answered', 'answered', 'answered', 'missed', 'answered', 'busy', 'answered', 'missed', 'answered', 'answered', 'answered', 'failed'];
+    callStatuses.forEach((status, i) => {
+      const k = K[(i * 7) % K.length];
+      const contact = db.get('SELECT phone, company_id FROM contacts WHERE id = ?', [k.id]);
+      const deal = db.get(`SELECT d.id FROM deals d JOIN stages s ON s.id = d.stage_id WHERE s.kind = 'open' AND d.company_id = ? ORDER BY d.id LIMIT 1`, [contact.company_id]);
+      const out = status === 'failed' || status === 'busy' || i % 3 === 2;
+      const duration = status === 'answered' ? R.int(40, 900) : 0;
+      const at = new Date(Date.now() - (i * 5 + R.int(1, 4)) * 3600000).toISOString();
+      const user = salesTeam[i % salesTeam.length];
+      ins('calls', { direction: out ? 'out' : 'in', status, phone: contact.phone, line: '+7 495 120-45-00', user_id: user, started_at: at, duration,
+        contact_id: k.id, company_id: contact.company_id, deal_id: deal?.id ?? null, provider: 'demo', ext_id: `seed-${i}`, is_processed: 1 });
+      const text = out
+        ? (status === 'answered' ? `Исходящий звонок на ${contact.phone} · ${Math.floor(duration / 60)} мин ${duration % 60} с` : `Исходящий звонок на ${contact.phone}: не дозвонились`)
+        : (status === 'answered' ? `Входящий звонок с ${contact.phone} · ${Math.floor(duration / 60)} мин ${duration % 60} с` : `Пропущенный входящий звонок с ${contact.phone}`);
+      ins('activities', { entity_type: deal ? 'deals' : 'contacts', entity_id: deal?.id ?? k.id, kind: 'call', text, user_id: user, created_by: user, created_at: at, updated_at: at });
+    });
+
     // ---------- custom lists ----------
     const l1 = ins('custom_lists', { name: 'Реестр договоров', icon: '📄', description: 'Договоры с клиентами и сроки действия',
       fields: [{ key: 'number', label: 'Номер', type: 'text' }, { key: 'client', label: 'Клиент', type: 'text' }, { key: 'date', label: 'Дата', type: 'date' }, { key: 'until', label: 'Действует до', type: 'date' },

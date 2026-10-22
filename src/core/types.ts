@@ -90,4 +90,27 @@ export interface Deps {
   /** called after every write so the browser engine can persist */
   onWrite?: () => void;
   log?: (...a: unknown[]) => void;
+  /** network integrations; only the server provides them, the browser demo works without */
+  integrations?: Integrations;
+}
+
+export interface OutgoingMail {
+  from: string; fromName?: string; to: string; cc?: string; subject: string; text: string;
+  inReplyTo?: string; messageId?: string;
+  attachments?: { name: string; mime?: string; fileId: number }[];
+}
+
+export interface Integrations {
+  /** sends through the mailbox SMTP server, returns the Message-ID */
+  sendMail(box: Record<string, any>, mail: OutgoingMail): Promise<{ messageId?: string }>;
+  /** checks IMAP and SMTP logins, returns a human readable result */
+  testMailbox(box: Record<string, any>): Promise<string>;
+  /** fetches new letters now, returns how many were stored */
+  syncMailbox(box: Record<string, any>): Promise<number>;
+  /** delivers an operator reply to the client in the channel */
+  sendToChannel(channel: Record<string, any>, handle: string, text: string): Promise<{ extId?: string }>;
+  /** checks channel credentials, returns the account name */
+  testChannel(channel: Record<string, any>): Promise<string>;
+  /** asks the telephony provider to connect the employee extension with a client number */
+  callTo(settings: Record<string, any>, ext: string, phone: string): Promise<void>;
 }

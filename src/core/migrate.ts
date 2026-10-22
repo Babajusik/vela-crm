@@ -32,12 +32,14 @@ export function migrate(db: DB): void {
       if (!existing.has(f.key)) db.exec(`ALTER TABLE "${e.key}" ADD COLUMN "${f.key}" ${sqlType(f.type)}`);
     }
     for (const f of e.fields) {
-      if (f.type === 'ref' || f.type === 'user' || f.key === 'onec_guid' || f.key === 'entity_id') {
+      if (f.type === 'ref' || f.type === 'user' || f.key === 'onec_guid' || f.key === 'entity_id' || f.key === 'ext_id' || f.key === 'message_id') {
         db.exec(`CREATE INDEX IF NOT EXISTS "ix_${e.key}_${f.key}" ON "${e.key}" ("${f.key}")`);
       }
     }
   }
   db.exec(`CREATE INDEX IF NOT EXISTS ix_activities_entity ON activities (entity_type, entity_id)`);
+  // CRM activities created before "done" got a default would be missed by the open/overdue filters
+  db.exec(`UPDATE crm_activities SET is_done = 0 WHERE is_done IS NULL`);
   // one row per accounting line: an operation split across categories gives several lines
   db.exec(`DROP VIEW IF EXISTS fin_lines`);
   db.exec(`CREATE VIEW fin_lines AS

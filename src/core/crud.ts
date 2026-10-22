@@ -58,6 +58,16 @@ export function hook(entityKey: string, h: Hooks) {
   HOOKS[entityKey] = next as Hooks;
 }
 
+/** Row-level visibility, e.g. mail of a personal mailbox is seen only by its owner. Returns an SQL condition or null. */
+export type Scope = (ctx: Ctx) => { sql: string; params: unknown[] } | null;
+const SCOPES: Record<string, Scope> = {};
+export function scope(entityKey: string, fn: Scope) { SCOPES[entityKey] = fn; }
+function scopeOf(ctx: Ctx, key: string) { return ctx.system ? null : SCOPES[key]?.(ctx) ?? null; }
+function assertInScope(ctx: Ctx, ent: Entity, id: number | string) {
+  const s = scopeOf(ctx, ent.key);
+  if (s && !ctx.db.get(`SELECT id FROM "${ent.key}" WHERE id = ? AND (${s.sql})`, [Number(id), ...s.params])) fail(404, `${ent.label}: запись не найдена`);
+}
+
 export type EventListener = (ctx: Ctx, event: string, payload: Record<string, any>) => void;
 const listeners: EventListener[] = [];
 export function onEvent(fn: EventListener) { listeners.push(fn); }
@@ -246,7 +256,9 @@ export function buildWhere(ent: Entity, query: Record<string, string>, ctx?: Ctx
 export function list(ctx: Ctx, entityKey: string, query: Record<string, string> = {}): ListResult {
   const ent = entity(entityKey);
   checkEntityPerm(ctx, ent, 'read');
-  const { where, params } = buildWhere(ent, query, ctx);
+  let { where, params } = buildWhere(ent, query, ctx);
+  const sc = scopeOf(ctx, ent.key);
+  if (sc) { where = where ? `${where} AND (${sc.sql})` : `WHERE ${sc.sql}`; params = [...params, ...sc.params]; }
   let order = ent.order ?? 'id desc';
   if (query.sort) {
     const known = query.sort === 'id' || query.sort === 'created_at' || query.sort === 'updated_at' || ent.fields.some((f) => f.key === query.sort && !f.internal);
@@ -275,6 +287,7 @@ export function get(ctx: Ctx, entityKey: string, id: number | string): Record<st
   checkEntityPerm(ctx, ent, 'read');
   const row = getRaw(ctx.db, ent.key, id);
   if (!row) fail(404, `${ent.label}: запись не найдена`);
+  assertInScope(ctx, ent, id);
   const item = serialize(ent, row)!;
   expand(ctx.db, ent, [item]);
   return item;
@@ -313,6 +326,7 @@ export function update(ctx: Ctx, entityKey: string, id: number | string, data: R
   checkEntityPerm(ctx, ent, 'write');
   const old = getRaw(ctx.db, ent.key, id);
   if (!old) fail(404, `${ent.label}: запись не найдена`);
+  assertInScope(ctx, ent, id);
   const patch = clean(ent, data, { partial: true, system: ctx.system });
   if (patch.extra) patch.extra = JSON.stringify({ ...parseJson(old!.extra, {}), ...parseJson(patch.extra, {}) });
   HOOKS[ent.key]?.beforeSave?.(ctx, patch, old!);
@@ -356,6 +370,7 @@ export function remove(ctx: Ctx, entityKey: string, id: number | string): { ok: 
   checkEntityPerm(ctx, ent, 'write');
   const row = getRaw(ctx.db, ent.key, id);
   if (!row) fail(404, `${ent.label}: запись не найдена`);
+  assertInScope(ctx, ent, id);
   HOOKS[ent.key]?.beforeDelete?.(ctx, row!);
   ctx.db.tx(() => {
     // cascade to child entities

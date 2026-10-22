@@ -9,9 +9,10 @@ import { EntityList } from '../../ui/data.tsx';
 import { ColorPicker, RecordForm, RefSelect, UserSelect } from '../../ui/fields.tsx';
 import { ModuleTabs } from '../../layout/Layout.tsx';
 import OneC from './OneC.tsx';
+import { TelephonySettingsPage } from '../comms/Telephony.tsx';
 
 const TABS = [
-  { to: '/settings', label: 'Компания', end: true }, { to: '/settings/onec', label: 'Интеграция с 1С' }, { to: '/settings/roles', label: 'Роли и права' },
+  { to: '/settings', label: 'Компания', end: true }, { to: '/settings/onec', label: 'Интеграция с 1С' }, { to: '/settings/telephony', label: 'Телефония' }, { to: '/settings/roles', label: 'Роли и права' },
   { to: '/settings/pipelines', label: 'Воронки' }, { to: '/settings/automations', label: 'Автодействия' }, { to: '/settings/fields', label: 'Свои поля' },
   { to: '/settings/api', label: 'API и вебхуки' }, { to: '/settings/modules', label: 'Модули' }, { to: '/settings/backup', label: 'Резервная копия' },
 ];
@@ -27,6 +28,7 @@ export default function Settings() {
     <Routes>
       <Route index element={<Company />} />
       <Route path="onec" element={<OneC />} />
+      <Route path="telephony" element={<TelephonySettingsPage />} />
       <Route path="roles" element={<Roles />} />
       <Route path="pipelines" element={<Pipelines />} />
       <Route path="automations" element={<Automations />} />

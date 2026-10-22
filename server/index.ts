@@ -1,4 +1,4 @@
-// Vela CRM server: REST API, static frontend, 1C exchange (CommerceML), files, Telegram, webhooks.
+// Vela CRM server: REST API, static frontend, 1C exchange (CommerceML), files, mail, messengers, telephony, webhooks.
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { createReadStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync, appendFileSync, unlinkSync } from 'node:fs';
 import { join, extname, resolve, normalize } from 'node:path';
@@ -9,9 +9,13 @@ import { bootstrap } from '../src/core/seed.ts';
 import { cml, odata } from '../src/core/router.ts';
 import * as parity from '../src/core/services/parity.ts';
 import { incomingMessage } from '../src/core/services/misc.ts';
+import * as comms from '../src/core/services/comms.ts';
+import * as tel from '../src/core/services/telephony.ts';
 import { userByToken } from '../src/core/services/auth.ts';
-import { create, getRaw } from '../src/core/crud.ts';
-import { parseJson } from '../src/core/util.ts';
+import { create, get, getRaw, isHttpError } from '../src/core/crud.ts';
+import * as mail from './mail.ts';
+import * as channels from './channels.ts';
+import * as telephony from './telephony.ts';
 
 const PORT = Number(process.env.PORT ?? 3000);
 const DATA_DIR = resolve(process.env.DATA_DIR ?? './data');
@@ -23,7 +27,37 @@ mkdirSync(join(DATA_DIR, 'files'), { recursive: true });
 mkdirSync(join(DATA_DIR, '1c'), { recursive: true });
 
 const db = openDb(join(DATA_DIR, 'vela.db'));
+const FILES_DIR = join(DATA_DIR, 'files');
 const deps: Deps = { db, mode: 'server', fetch: globalThis.fetch, log: (...a) => console.error(new Date().toISOString(), ...a) };
+const sys = () => ({ db, user: systemUser(deps), deps, system: true });
+
+/** Bytes of a stored file, for mail attachments. */
+function readStoredFile(id: number) {
+  const f = getRaw(db, 'files', id);
+  if (!f) return null;
+  const path = String(f.path ?? '');
+  if (path.startsWith('data:')) {
+    const [meta, data] = path.split(',');
+    return { name: f.name, mime: f.mime, content: meta.includes(';base64') ? Buffer.from(data, 'base64') : Buffer.from(decodeURIComponent(data), 'utf8') };
+  }
+  const p = join(FILES_DIR, path.replace(/^disk:/, '').replace(/[\\/]/g, ''));
+  return existsSync(p) ? { name: f.name, mime: f.mime, content: readFileSync(p) } : null;
+}
+
+function syncBox(box: Record<string, any>) {
+  return mail.syncMailbox(box, FILES_DIR,
+    (m) => { comms.incomingMail(sys(), box.id, m); },
+    (state) => { db.run(`UPDATE mailboxes SET imap_state = ? WHERE id = ?`, [JSON.stringify(state), box.id]); });
+}
+
+deps.integrations = {
+  sendMail: (box, m) => mail.sendMail(box, m, readStoredFile),
+  testMailbox: (box) => mail.testMailbox(box),
+  syncMailbox: (box) => syncBox(box),
+  sendToChannel: (ch, handle, text) => channels.sendToChannel(fetch, ch, handle, text),
+  testChannel: (ch) => channels.testChannel(fetch, ch),
+  callTo: (s, ext, phone) => telephony.callTo(fetch, s as tel.TelephonySettings, ext, phone),
+};
 await init(db, { demo: DEMO });
 if (!DEMO) {
   const email = process.env.ADMIN_EMAIL ?? 'admin@company.local';
@@ -173,8 +207,8 @@ async function uploadFile(req: IncomingMessage, res: ServerResponse, q: URLSearc
 async function downloadFile(req: IncomingMessage, res: ServerResponse, id: number, q: URLSearchParams) {
   const user = await userByToken(db, tokenOf(req) ?? q.get('token') ?? undefined);
   if (!user) return send(res, 401, { error: 'Требуется вход в систему' });
-  const f = getRaw(db, 'files', id);
-  if (!f) return send(res, 404, { error: 'Файл не найден' });
+  try { get({ db, user, deps }, 'files', id); } catch (e) { return send(res, isHttpError(e) ? (e as any).status : 500, { error: (e as Error).message }); }
+  const f = getRaw(db, 'files', id)!;
   if (String(f.path ?? '').startsWith('data:')) {
     const [meta, data] = String(f.path).split(',');
     const buf = meta.includes(';base64') ? Buffer.from(data, 'base64') : Buffer.from(decodeURIComponent(data), 'utf8');
@@ -187,36 +221,47 @@ async function downloadFile(req: IncomingMessage, res: ServerResponse, id: numbe
   createReadStream(p).pipe(res);
 }
 
-// ---------------- Telegram (long polling, works without a public address) ----------------
-const tgOffsets = new Map<number, number>();
-async function pollTelegram() {
-  const channels = db.all(`SELECT * FROM channels WHERE kind = 'telegram' AND is_active = 1`);
-  for (const ch of channels) {
-    const token = parseJson<Record<string, string>>(ch.settings, {}).bot_token;
-    if (!token) continue;
-    try {
-      const offset = tgOffsets.get(ch.id) ?? 0;
-      const r = await fetch(`https://api.telegram.org/bot${token}/getUpdates?timeout=0&offset=${offset}`);
-      const data: any = await r.json();
-      for (const u of data.result ?? []) {
-        tgOffsets.set(ch.id, u.update_id + 1);
-        const m = u.message;
-        if (!m?.text) continue;
-        const name = [m.from?.first_name, m.from?.last_name].filter(Boolean).join(' ') || m.from?.username || 'Клиент Telegram';
-        incomingMessage({ db, user: systemUser(deps), deps, system: true }, { channel_id: ch.id, client_name: name, client_handle: `tg:${m.chat.id}`, text: m.text });
-      }
-    } catch (e) { deps.log?.('telegram poll failed', ch.id, (e as Error).message); }
+// ---------------- telephony hook ----------------
+async function telephonyHook(req: IncomingMessage, res: ServerResponse, path: string, q: URLSearchParams) {
+  const [, token = '', ...rest] = path.slice('/api/telephony/hook'.length).split('/');
+  const s = tel.telephonySettings(sys());
+  if (!s.hook_token || !safeEqual(token, s.hook_token)) return send(res, 404, 'not found');
+  const raw = req.method === 'POST' ? (await readBody(req)).toString('utf8') : '';
+  const out = telephony.parseHook(fetch, s, req.method ?? 'GET', '/' + rest.join('/'), q, raw);
+  send(res, out.status, out.body);
+  for (const ev of out.events) {
+    try { tel.callEvent(sys(), ev); } catch (e) { deps.log?.('call event failed', ev, (e as Error).message); }
+  }
+  if (out.after) {
+    out.after().then((evs) => evs.forEach((ev) => tel.callEvent(sys(), ev))).catch((e) => deps.log?.('call record link failed', e.message));
   }
 }
 
-async function sendTelegram(result: any) {
-  if (result?.channel?.kind !== 'telegram') return;
-  const token = result.channel.settings?.bot_token;
-  const chatId = String(result.handle ?? '').replace(/^tg:/, '');
-  if (!token || !chatId || !/^-?\d+$/.test(chatId)) return;
-  await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: chatId, text: result.message?.text }),
-  }).catch((e) => deps.log?.('telegram send failed', e));
+// ---------------- messengers and mail polling ----------------
+async function pollChannels() {
+  const list = db.all(`SELECT * FROM channels WHERE is_active = 1 AND kind IN ('telegram','vk','avito','whatsapp')`);
+  await channels.pollChannels(fetch, list,
+    (m) => { incomingMessage(sys(), m); },
+    (id, error) => comms.markChannel(sys(), id, { error }),
+    (channelId, handle) => !!db.get(`SELECT id FROM conversations WHERE channel_id = ? AND client_handle = ? LIMIT 1`, [channelId, handle]));
+}
+
+let mailBusy = false;
+async function pollMail() {
+  if (mailBusy) return;
+  mailBusy = true;
+  try {
+    for (const box of db.all(`SELECT * FROM mailboxes WHERE is_active = 1 AND imap_host IS NOT NULL AND imap_host != '' AND password IS NOT NULL`)) {
+      try {
+        await syncBox(box);
+        comms.markMailboxSync(sys(), box.id, null);
+      } catch (e) {
+        comms.markMailboxSync(sys(), box.id, (e as Error).message);
+      }
+    }
+  } finally {
+    mailBusy = false;
+  }
 }
 
 // ---------------- webhooks ----------------
@@ -235,6 +280,14 @@ const server = createServer(async (req, res) => {
   try {
     if (path === '/api/1c/exchange' || path === '/1c_exchange.php' || path === '/bitrix/admin/1c_exchange.php') return await exchange1c(req, res, url.searchParams);
     if (path === '/api/files/upload' && (req.method === 'PUT' || req.method === 'POST')) return await uploadFile(req, res, url.searchParams);
+    if (path.startsWith('/api/telephony/hook/')) return await telephonyHook(req, res, path, url.searchParams);
+    // the website chat widget runs on the client's site
+    if (path.startsWith('/api/public/chat/')) {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+      if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
+    }
     const dl = /^\/api\/files\/(\d+)\/download$/.exec(path);
     if (dl && req.method === 'GET') return await downloadFile(req, res, Number(dl[1]), url.searchParams);
     if (path.startsWith('/api/')) {
@@ -245,7 +298,6 @@ const server = createServer(async (req, res) => {
       }
       const result = await handle(deps, { method: req.method ?? 'GET', path, query: Object.fromEntries(url.searchParams), body, token: tokenOf(req) });
       send(res, result.status, result.body, result.headers);
-      if (/^\/api\/conversations\/\d+\/reply$/.test(path) && result.status === 200) sendTelegram(result.body);
       flushWebhooks();
       return;
     }
@@ -261,7 +313,9 @@ server.listen(PORT, () => {
   console.log(`Vela CRM запущена: http://localhost:${PORT}${DEMO ? ' (демо-данные, вход admin@vela.demo / demo1234)' : ''}`);
 });
 
-setInterval(pollTelegram, 5000);
+setInterval(() => { pollChannels().catch((e) => deps.log?.('channels poll failed', e.message)); }, 5000);
+setInterval(() => { pollMail().catch((e) => deps.log?.('mail poll failed', e.message)); }, 120_000);
+setTimeout(() => { pollMail().catch(() => {}); }, 10_000);
 let lastAutoSync = 0;
 setInterval(async () => {
   const ctx = { db, user: systemUser(deps), deps, system: true };

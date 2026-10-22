@@ -1,5 +1,6 @@
 // Activity feed for record cards: comments with likes and replies, calls, meetings, scheduled CRM activities
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { CalendarClock, Check, Heart, Mail, MessageSquare, Phone, Reply, Users as UsersIcon, Zap } from 'lucide-react';
 import { api } from '../api.ts';
 import { dateTime, deadlineInfo, nowLocalDateTime, relative } from '../lib/format.ts';
@@ -137,6 +138,8 @@ export function Feed({ entity, id, schedule }: { entity: string; id: number; sch
                         <p className="text-sm"><span className="font-semibold">{a.user_name ?? 'Система'}</span> <span className="text-xs text-faint">{dateTime(a.created_at)}</span>
                           {a.kind !== 'comment' && <span className="ml-2 inline-flex items-center gap-1 text-xs font-semibold text-primary">{KIND_ICON[a.kind]}{KIND_LABEL[a.kind]}</span>}</p>
                         <p className="mt-1 whitespace-pre-line text-sm">{a.text}</p>
+                        {a.meta?.record_url && <audio controls preload="none" src={a.meta.record_url} className="mt-2 h-9 w-full max-w-sm" aria-label="Запись разговора" />}
+                        {a.meta?.mail_id && <Link to={`/mail?m=${a.meta.mail_id}`} className="mt-1 inline-block text-xs font-semibold text-primary hover:underline">Открыть письмо</Link>}
                         <div className="mt-2 flex items-center gap-2">
                           <button type="button" onClick={() => like(a.id)} className={cx('inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-semibold', liked ? 'border-accent/40 bg-accent-soft text-accent' : 'border-line text-muted hover:text-fg')}>
                             <Heart className={cx('size-3.5', liked && 'fill-current')} />{(a.likes ?? []).length || ''}

@@ -2,6 +2,7 @@ import { can, create, getRaw, logActivity, onEvent, requirePerm, update, type Ct
 import { ENTITIES, ENTITY_LIST, entity } from '../schema.ts';
 import { addDays, fail, localDate, nowIso, parseJson, round2, today } from '../util.ts';
 import { balances, monthRange } from './finance.ts';
+import { findByPhone, telephonySettings } from './telephony.ts';
 
 // ---------------- dashboard ----------------
 export function dashboard(ctx: Ctx) {
@@ -116,20 +117,39 @@ export function replyConversation(ctx: Ctx, id: number, text: string) {
   const msg = create({ ...ctx, system: true }, 'conv_messages', { conversation_id: id, direction: 'out', text, user_id: ctx.user.id });
   ctx.db.run(`UPDATE conversations SET last_message_at = ?, last_text = ?, status = CASE WHEN status = 'new' THEN 'open' ELSE status END,
     assignee_id = COALESCE(assignee_id, ?), unread = 0 WHERE id = ?`, [nowIso(), text, ctx.user.id, id]);
+  // the raw channel (with its tokens) is for the server to deliver the reply; the router never returns it
   const ch = conv!.channel_id ? getRaw(ctx.db, 'channels', conv!.channel_id) : null;
-  return { message: msg, channel: ch ? { kind: ch.kind, settings: parseJson(ch.settings, {}) } : null, handle: conv!.client_handle };
+  return { message: msg, channel: ch ?? null, handle: conv!.client_handle };
 }
 
-export function incomingMessage(ctx: Ctx, body: { channel_id: number; client_name: string; client_handle: string; text: string }) {
+export interface IncomingChatMessage {
+  channel_id: number; client_name: string; client_handle: string; text: string;
+  /** message id in the messenger, to skip duplicates */
+  ext_id?: string;
+  /** phone or username, to find the client in the CRM */
+  phone?: string; username?: string;
+}
+
+function contactForChat(ctx: Ctx, body: IncomingChatMessage) {
+  if (body.phone) {
+    const m = findByPhone(ctx, body.phone);
+    if (m.contact_id || m.company_id) return { id: m.contact_id, company_id: m.company_id };
+  }
+  const names = [body.client_handle, body.username, body.username ? `@${body.username}` : null].filter(Boolean);
+  return ctx.db.get(`SELECT id, company_id FROM contacts WHERE telegram IN (${names.map(() => '?').join(',')}) OR phone = ? LIMIT 1`, [...names, body.client_handle]);
+}
+
+export function incomingMessage(ctx: Ctx, body: IncomingChatMessage) {
   const sys: Ctx = { ...ctx, system: true };
+  if (body.ext_id && ctx.db.get(`SELECT m.id FROM conv_messages m JOIN conversations c ON c.id = m.conversation_id WHERE c.channel_id = ? AND m.ext_id = ?`, [body.channel_id, body.ext_id])) return null;
   let conv = ctx.db.get(`SELECT * FROM conversations WHERE channel_id = ? AND client_handle = ? AND status != 'closed' ORDER BY id DESC LIMIT 1`, [body.channel_id, body.client_handle]);
   const ch = getRaw(ctx.db, 'channels', body.channel_id);
   if (!conv) {
-    const contact = ctx.db.get(`SELECT id, company_id FROM contacts WHERE telegram = ? OR phone = ? LIMIT 1`, [body.client_handle, body.client_handle]);
+    const contact = contactForChat(ctx, body);
     conv = create(sys, 'conversations', { channel_id: body.channel_id, client_name: body.client_name, client_handle: body.client_handle, status: 'new',
       contact_id: contact?.id ?? null, company_id: contact?.company_id ?? null, assignee_id: ch?.responsible_id ?? null, unread: 0 });
   }
-  create(sys, 'conv_messages', { conversation_id: conv!.id, direction: 'in', text: body.text });
+  create(sys, 'conv_messages', { conversation_id: conv!.id, direction: 'in', text: body.text, ext_id: body.ext_id ?? null });
   ctx.db.run(`UPDATE conversations SET last_message_at = ?, last_text = ?, unread = COALESCE(unread,0) + 1 WHERE id = ?`, [nowIso(), body.text, conv!.id]);
   if (conv!.assignee_id) {
     ctx.db.run(`INSERT INTO notifications (user_id, text, link, is_read, kind, created_at, updated_at) VALUES (?,?,?,0,'system',?,?)`,
@@ -173,17 +193,26 @@ export function conversationToDeal(ctx: Ctx, id: number) {
 }
 
 // ---------------- mail ----------------
-export function sendMail(ctx: Ctx, body: { mailbox_id?: number; to: string; cc?: string; subject: string; body: string; company_id?: number; contact_id?: number; deal_id?: number }) {
+export function sendMail(ctx: Ctx, body: { mailbox_id?: number; to: string; cc?: string; subject: string; body: string; company_id?: number; contact_id?: number; deal_id?: number;
+  in_reply_to?: string; file_ids?: number[] }) {
   requirePerm(ctx, 'mail', 'write');
   if (!body.to || !/@/.test(body.to)) fail(422, 'Укажите адрес получателя');
-  const box = body.mailbox_id ? getRaw(ctx.db, 'mailboxes', body.mailbox_id) : ctx.db.get(`SELECT * FROM mailboxes WHERE user_id = ? OR user_id IS NULL ORDER BY user_id DESC LIMIT 1`, [ctx.user.id]);
+  const box = body.mailbox_id ? getRaw(ctx.db, 'mailboxes', body.mailbox_id)
+    : ctx.db.get(`SELECT * FROM mailboxes WHERE is_active = 1 AND (user_id = ? OR user_id IS NULL) ORDER BY user_id DESC LIMIT 1`, [ctx.user.id]);
+  if (box?.user_id && box.user_id !== ctx.user.id && !can(ctx.user, 'mail', 'admin')) fail(403, 'Это личный ящик другого сотрудника');
+  const files = (body.file_ids ?? []).map(Number).filter(Boolean).map((id) => getRaw(ctx.db, 'files', id)).filter(Boolean) as Record<string, any>[];
   const m = create({ ...ctx, system: true }, 'mails', {
     mailbox_id: box?.id ?? null, folder: 'sent', from_addr: box?.email ?? ctx.user.email, from_name: box?.name ?? ctx.user.name, to_addr: body.to, cc: body.cc,
     subject: body.subject, body: body.body, date: nowIso(), is_read: 1, company_id: body.company_id, contact_id: body.contact_id, deal_id: body.deal_id,
+    in_reply_to: body.in_reply_to ?? null, attachments: files.length,
   });
+  for (const f of files) {
+    const copy = create({ ...ctx, system: true }, 'files', { name: f.name, entity_type: 'mails', entity_id: m.id });
+    ctx.db.run(`UPDATE files SET size = ?, mime = ?, path = ? WHERE id = ?`, [f.size, f.mime, f.path, copy.id]);
+  }
   if (body.deal_id) logActivity(ctx, 'deals', body.deal_id, 'email', `Письмо «${body.subject}» → ${body.to}`);
   if (body.company_id) logActivity(ctx, 'companies', body.company_id, 'email', `Письмо «${body.subject}» → ${body.to}`);
-  return { mail: m, mailbox: box ? { ...box } : null };
+  return { mail: m, mailbox: box ?? null, files };
 }
 
 // ---------------- CSV import / export ----------------
@@ -296,6 +325,7 @@ export function setSetting(ctx: Ctx, key: string, value: unknown) {
 export function readSettings(ctx: Ctx) {
   const out: Record<string, unknown> = {};
   for (const k of PUBLIC_SETTINGS) out[k] = getSetting(ctx, k);
+  out.telephony = { enabled: telephonySettings(ctx).provider !== 'none', provider: telephonySettings(ctx).provider };
   return out;
 }
 

@@ -109,3 +109,13 @@ CRM: отчёт по продажам,crm,should,yes,yes,
 Рабочие столы с виджетами,dashboard,should,yes,yes,
 Выдвижные меню модулей второго уровня,layout,must,yes,yes,
 Адаптивная мобильная версия,layout,must,no,yes,у оригинала веб-версия не адаптивна
+Почта по IMAP/SMTP с привязкой к клиентам,mail,must,yes,yes,
+Вложения и ответы в ветке,mail,should,yes,yes,
+Телефония: карточка входящего звонка,telephony,must,yes,yes,Zadarma / Новофон / Mango / JSON
+Телефония: журнал и записи разговоров,telephony,must,yes,yes,
+Телефония: звонок из CRM,telephony,should,yes,yes,Zadarma / Новофон / Mango
+Пропущенный звонок → дело «Перезвонить»,telephony,should,yes,yes,
+ВКонтакте в окне диалогов,communications,should,yes,yes,
+Авито в окне диалогов,communications,should,yes,yes,
+WhatsApp в окне диалогов,communications,should,yes,yes,через Green API
+Чат на сайте (виджет),communications,should,yes,yes,

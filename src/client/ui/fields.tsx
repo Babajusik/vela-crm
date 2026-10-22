@@ -7,6 +7,7 @@ import { api } from '../api.ts';
 import { date, dateTime, money, num } from '../lib/format.ts';
 import { useMeta, useSave, useUsers, type CustomField } from '../lib/state.tsx';
 import { Avatar, AvatarStack, Badge, Button, Checkbox, FormRow, Input, Modal, Select, Switch, Textarea, cx, useToast } from './ui.tsx';
+import { PhoneLink } from './phone.tsx';
 
 // links to record pages
 export const ENTITY_LINKS: Record<string, string> = {
@@ -48,7 +49,7 @@ export function FieldValue({ field, item, value }: { field: Field; item?: Record
     case 'color': return <span className="inline-block size-4 rounded" style={{ background: String(v) }} />;
     case 'url': return <a href={String(v).startsWith('http') ? String(v) : `https://${v}`} target="_blank" rel="noreferrer" className="text-primary hover:underline" onClick={(e) => e.stopPropagation()}>{String(v)}</a>;
     case 'email': return <a href={`mailto:${v}`} className="text-primary hover:underline" onClick={(e) => e.stopPropagation()}>{String(v)}</a>;
-    case 'phone': return <a href={`tel:${String(v).replace(/[^\d+]/g, '')}`} className="whitespace-nowrap hover:text-primary" onClick={(e) => e.stopPropagation()}>{String(v)}</a>;
+    case 'phone': return <PhoneLink value={String(v)} />;
     case 'richtext': return <SafeHtml html={String(v)} />;
     case 'textarea': return <span className="whitespace-pre-line">{String(v)}</span>;
     case 'json': return <span className="text-faint">…</span>;

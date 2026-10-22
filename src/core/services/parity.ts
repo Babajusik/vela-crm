@@ -74,9 +74,9 @@ export function dealActivityFlags(ctx: Ctx) {
   const now = new Date().toISOString().slice(0, 16);
   const t = today();
   const rows = ctx.db.all(`SELECT deal_id,
-      SUM(CASE WHEN is_done = 0 AND due_at < ? THEN 1 ELSE 0 END) AS overdue,
-      SUM(CASE WHEN is_done = 0 AND substr(due_at,1,10) = ? THEN 1 ELSE 0 END) AS today,
-      SUM(CASE WHEN is_done = 0 THEN 1 ELSE 0 END) AS open
+      SUM(CASE WHEN COALESCE(is_done,0) = 0 AND due_at < ? THEN 1 ELSE 0 END) AS overdue,
+      SUM(CASE WHEN COALESCE(is_done,0) = 0 AND substr(due_at,1,10) = ? THEN 1 ELSE 0 END) AS today,
+      SUM(CASE WHEN COALESCE(is_done,0) = 0 THEN 1 ELSE 0 END) AS open
     FROM crm_activities WHERE deal_id IS NOT NULL GROUP BY deal_id`, [now, t]);
   const comments = ctx.db.all(`SELECT entity_id AS deal_id, COUNT(*) AS c FROM activities WHERE entity_type = 'deals' AND kind IN ('comment','call','meeting') GROUP BY entity_id`);
   const out: Record<number, { overdue: number; today: number; open: number; comments: number }> = {};

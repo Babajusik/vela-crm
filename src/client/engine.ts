@@ -5,8 +5,8 @@ import wasmUrl from 'sql.js/dist/sql-wasm.wasm?url';
 import { handle, init, normalizeParams, type DB, type Deps, type Req, type Res } from '../core/index.ts';
 
 const IDB_NAME = 'vela-demo';
-const IDB_KEY = 'db-v2'; // bump when demo data changes: old copies are dropped
-const OLD_KEYS = ['db-v1'];
+const IDB_KEY = 'db-v3'; // bump when demo data changes: old copies are dropped
+const OLD_KEYS = ['db-v1', 'db-v2'];
 
 function idb(): Promise<IDBDatabase> {
   return new Promise((ok, fail) => {
