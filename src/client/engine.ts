@@ -5,7 +5,8 @@ import wasmUrl from 'sql.js/dist/sql-wasm.wasm?url';
 import { handle, init, normalizeParams, type DB, type Deps, type Req, type Res } from '../core/index.ts';
 
 const IDB_NAME = 'vela-demo';
-const IDB_KEY = 'db-v1';
+const IDB_KEY = 'db-v2'; // bump when demo data changes: old copies are dropped
+const OLD_KEYS = ['db-v1'];
 
 function idb(): Promise<IDBDatabase> {
   return new Promise((ok, fail) => {
@@ -97,6 +98,7 @@ function persistSoon() {
 export function startEngine(): Promise<Deps> {
   ready ??= (async () => {
     const SQL = await initSqlJs({ locateFile: () => wasmUrl });
+    for (const k of OLD_KEYS) idbSet(k, null);
     const saved = await idbGet(IDB_KEY);
     rawDb = saved ? new SQL.Database(saved) : new SQL.Database();
     rawDb.create_function('lower', (v: unknown) => (v == null ? null : String(v).toLowerCase()));
